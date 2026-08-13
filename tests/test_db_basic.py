@@ -1,6 +1,8 @@
 import sys, os
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "streamlit_app"))
 os.environ.setdefault("DB_PATH", str(ROOT / "vault" / "meta.db"))
@@ -34,10 +36,16 @@ def test_update_status(tmp_path):
 
 def test_move_entry_changes_path_keeps_row_count(tmp_path):
     m, db = _fresh_db(tmp_path)
-    m.upsert_entry("pending_review/示例监测产品.md", "concept", "示例监测产品", "产品", "pending", "V1.0", None, "2026-08-13")
+    m.upsert_entry("pending_review/示例监测产品.md", "concept", "示例监测产品", "产品", "pending", "V2.1", "fp123", "2026-08-13")
     m.move_entry("pending_review/示例监测产品.md", "NEXUS/概念/示例监测产品.md", "active")
     with m.get_conn() as conn:
         n = conn.execute("SELECT COUNT(*) FROM knowledge_entries").fetchone()[0]
         assert n == 1
-        row = conn.execute("SELECT path, status FROM knowledge_entries").fetchone()
-        assert row == ("NEXUS/概念/示例监测产品.md", "active")
+        row = conn.execute("SELECT path, type, title, department, status, version, fingerprint, updated_at FROM knowledge_entries").fetchone()
+        assert row == ("NEXUS/概念/示例监测产品.md", "concept", "示例监测产品", "产品", "active", "V2.1", "fp123", "2026-08-13")
+
+
+def test_move_entry_missing_path_raises_keyerror(tmp_path):
+    m, db = _fresh_db(tmp_path)
+    with pytest.raises(KeyError):
+        m.move_entry("不存在.md", "NEXUS/概念/新位置.md", "active")
