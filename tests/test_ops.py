@@ -10,12 +10,16 @@ from ops import write_trigger, validate_upload, approve_entry, reject_entry, res
 def test_write_trigger_atomic(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_ROOT", str(tmp_path))
     (tmp_path / "_triggers").mkdir()
-    import ops
+    import importlib, ops
+    ops = importlib.reload(ops)  # 重新求值 KB_ROOT，指向 monkeypatch 后的 tmp_path
     p = ops.write_trigger("compile", ["RAW/a.md", "RAW/b.md"], "streamlit")
     assert p.name.startswith("compile_") and p.name.endswith(".md")
-    assert not list((tmp_path / "_triggers").glob(".tmp_*"))  # 无残留临时文件
+    assert not list((Path(ops.KB_ROOT) / "_triggers").glob(".tmp_*"))  # 无残留临时文件
     text = p.read_text(encoding="utf-8")
     assert "kind: compile" in text and "RAW/a.md" in text
+    # 清理修复前旧版本可能写入真实 vault/_triggers/ 的残留（若有）
+    for stale in (ROOT / "vault" / "_triggers").glob("compile_*.md"):
+        stale.unlink()
 
 def test_validate_upload():
     assert validate_upload("a.md", 1024) is None
