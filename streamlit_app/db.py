@@ -161,7 +161,10 @@ def search_stats() -> dict:
 
 # ---- 重建索引 ----
 def rebuild_index() -> int:
-    """扫描 KB_ROOT 下 NEXUS/**/*.md 与 pending_review/*.md，解析 YAML 重建表。返回条目数。"""
+    """扫描 KB_ROOT 下 NEXUS/**/*.md 与 pending_review/*.md，解析 YAML 重建表。返回条目数。
+
+    单文件损坏（无完整 frontmatter / YAML 非法 / frontmatter 非映射）仅跳过该文件，
+    不影响其余条目重建。"""
     import yaml
     count = 0
     with get_conn() as conn:
@@ -174,11 +177,19 @@ def rebuild_index() -> int:
                         continue
                     full = os.path.join(dirpath, fn)
                     rel = os.path.relpath(full, KB_ROOT).replace("\\", "/")
-                    text = open(full, encoding="utf-8").read()
+                    with open(full, encoding="utf-8") as f:
+                        text = f.read()
                     if not text.startswith("---"):
                         continue
-                    _, fm, _ = text.split("---", 2)
-                    meta = yaml.safe_load(fm) or {}
+                    parts = text.split("---", 2)
+                    if len(parts) < 3:  # 以 --- 开头但无第二个 ---：frontmatter 不完整
+                        continue
+                    try:
+                        meta = yaml.safe_load(parts[1])
+                    except yaml.YAMLError:
+                        continue
+                    if not isinstance(meta, dict):  # frontmatter 解析为列表/字符串等非映射
+                        continue
                     conn.execute(
                         "INSERT OR REPLACE INTO knowledge_entries "
                         "(path, type, title, department, status, version, fingerprint, updated_at) "
