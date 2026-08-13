@@ -130,3 +130,62 @@ def list_rejected_reviews() -> list[dict]:
             "WHERE pr.human_decision='rejected' ORDER BY pr.created_at DESC").fetchall()
         cols = [d[0] for d in conn.execute("SELECT * FROM pending_reviews LIMIT 0").description]
         return [dict(zip(cols + ["title"], r)) for r in rows]
+
+
+# ---- 搜索日志与看板 ----
+def insert_search_log(query: str, match_count: int, source: str) -> None:
+    """写入搜索日志（timestamp 本地时间）。"""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO search_logs (query, match_count, source, timestamp) VALUES (?,?,?,datetime('now','localtime'))",
+            (query, match_count, source))
+
+
+def top_missed_queries(limit: int = 20) -> list[dict]:
+    """match_count=0 的 query 按次数降序。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT query, COUNT(*) AS cnt, MAX(timestamp) AS last_seen "
+            "FROM search_logs WHERE match_count=0 GROUP BY query ORDER BY cnt DESC, last_seen DESC LIMIT ?",
+            (limit,)).fetchall()
+        return [dict(zip(["query", "cnt", "last_seen"], r)) for r in rows]
+
+
+def search_stats() -> dict:
+    """{total, miss_count, miss_rate}。"""
+    with get_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM search_logs").fetchone()[0]
+        miss = conn.execute("SELECT COUNT(*) FROM search_logs WHERE match_count=0").fetchone()[0]
+        return {"total": total, "miss_count": miss, "miss_rate": round(miss / total, 2) if total else 0.0}
+
+
+# ---- 重建索引 ----
+def rebuild_index() -> int:
+    """扫描 KB_ROOT 下 NEXUS/**/*.md 与 pending_review/*.md，解析 YAML 重建表。返回条目数。"""
+    import yaml
+    count = 0
+    with get_conn() as conn:
+        conn.execute("DELETE FROM knowledge_entries")
+        for base in ("NEXUS", "pending_review"):
+            base_dir = os.path.join(KB_ROOT, base)
+            for dirpath, _, files in os.walk(base_dir):
+                for fn in files:
+                    if not fn.endswith(".md"):
+                        continue
+                    full = os.path.join(dirpath, fn)
+                    rel = os.path.relpath(full, KB_ROOT).replace("\\", "/")
+                    text = open(full, encoding="utf-8").read()
+                    if not text.startswith("---"):
+                        continue
+                    _, fm, _ = text.split("---", 2)
+                    meta = yaml.safe_load(fm) or {}
+                    conn.execute(
+                        "INSERT OR REPLACE INTO knowledge_entries "
+                        "(path, type, title, department, status, version, fingerprint, updated_at) "
+                        "VALUES (?,?,?,?,?,?,?,?)",
+                        (rel, meta.get("type", "concept"), meta.get("title", fn[:-3]),
+                         meta.get("department"), meta.get("status", "active"),
+                         meta.get("version", "V1.0"), meta.get("fingerprint"),
+                         meta.get("updated", meta.get("created"))))
+                    count += 1
+    return count

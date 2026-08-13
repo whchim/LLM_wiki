@@ -47,3 +47,23 @@ def test_resubmit_clears_decision(fresh_db):
     with m.get_conn() as conn:
         row = conn.execute("SELECT human_decision, reject_reason FROM pending_reviews WHERE id=?", (rid,)).fetchone()
     assert row == (None, None)
+
+def test_rejected_resubmit_appears_in_pending(fresh_db):
+    m = fresh_db
+    rid = m.insert_review("pending_review/x.md", "demo_user", "产品", "approved", "{}")
+    m.set_human_decision(rid, "rejected", "内容不足")
+    assert m.list_pending_reviews() == []
+    assert len(m.list_rejected_reviews()) == 1
+    m.resubmit_review(rid)
+    pend = m.list_pending_reviews()
+    assert len(pend) == 1 and pend[0]["id"] == rid
+    assert m.list_rejected_reviews() == []
+
+def test_pending_review_carries_title_via_join(fresh_db):
+    m = fresh_db
+    m.upsert_entry("pending_review/应急哨兵.md", "concept", "应急哨兵", "产品",
+                   "pending", "V1.0", None, "2026-08-13")
+    m.insert_review("pending_review/应急哨兵.md", "demo_user", "产品", "approved", "{}")
+    items = m.list_pending_reviews()
+    assert len(items) == 1
+    assert items[0]["title"] == "应急哨兵"  # LEFT JOIN 生效，dict 含 title 键
