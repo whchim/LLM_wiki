@@ -56,3 +56,77 @@ def move_entry(old_path: str, new_path: str, status: str) -> None:
             "INSERT INTO knowledge_entries (path, type, title, department, status, version, fingerprint, updated_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
             (new_path, row[0], row[1], row[2], status, row[3], row[4], row[5]))
+
+
+# ---- 编译任务 ----
+def insert_compile_task(raw_path: str, fingerprint: str) -> int:
+    """插入 status='pending' 任务，返回 id。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO compile_tasks (raw_path, fingerprint, status, started_at) VALUES (?,?,'pending',datetime('now','localtime'))",
+            (raw_path, fingerprint))
+        return cur.lastrowid
+
+
+def update_compile_task(task_id: int, status: str,
+                        nexus_path: str | None = None,
+                        error_msg: str | None = None) -> None:
+    """更新任务状态与完成时间。"""
+    with get_conn() as conn:
+        if status in ("done", "failed", "cached"):
+            conn.execute(
+                "UPDATE compile_tasks SET status=?, nexus_path=COALESCE(?,nexus_path), error_msg=?, completed_at=datetime('now','localtime') WHERE id=?",
+                (status, nexus_path, error_msg, task_id))
+        else:
+            conn.execute("UPDATE compile_tasks SET status=? WHERE id=?", (status, task_id))
+
+
+# ---- 审核 ----
+def insert_review(nexus_path: str, submitter: str, department: str,
+                  ai_verdict: str, ai_scores: str) -> int:
+    """插入 AI 审核结果，返回 id。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO pending_reviews (nexus_path, submitter, department, ai_verdict, ai_scores, created_at) "
+            "VALUES (?,?,?,?,?,datetime('now','localtime'))",
+            (nexus_path, submitter, department, ai_verdict, ai_scores))
+        return cur.lastrowid
+
+
+def set_human_decision(review_id: int, decision: str,
+                       reject_reason: str | None = None) -> None:
+    """人工通过/驳回。"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE pending_reviews SET human_decision=?, reject_reason=? WHERE id=?",
+            (decision, reject_reason, review_id))
+
+
+def resubmit_review(review_id: int) -> None:
+    """重新提交审核：human_decision 置 NULL、清空 reject_reason。"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE pending_reviews SET human_decision=NULL, reject_reason=NULL WHERE id=?",
+            (review_id,))
+
+
+def list_pending_reviews() -> list[dict]:
+    """human_decision IS NULL 的审核记录（含条目标题）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT pr.*, e.title FROM pending_reviews pr "
+            "LEFT JOIN knowledge_entries e ON e.path=pr.nexus_path "
+            "WHERE pr.human_decision IS NULL ORDER BY pr.created_at DESC").fetchall()
+        cols = [d[0] for d in conn.execute("SELECT * FROM pending_reviews LIMIT 0").description]
+        return [dict(zip(cols + ["title"], r)) for r in rows]
+
+
+def list_rejected_reviews() -> list[dict]:
+    """human_decision='rejected' 的记录（可重新提交）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT pr.*, e.title FROM pending_reviews pr "
+            "LEFT JOIN knowledge_entries e ON e.path=pr.nexus_path "
+            "WHERE pr.human_decision='rejected' ORDER BY pr.created_at DESC").fetchall()
+        cols = [d[0] for d in conn.execute("SELECT * FROM pending_reviews LIMIT 0").description]
+        return [dict(zip(cols + ["title"], r)) for r in rows]
