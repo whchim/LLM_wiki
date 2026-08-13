@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# SQLite
+vault/meta.db
+vault/meta.db-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 用户本地配置（不提交）
+.claude/settings.local.json
