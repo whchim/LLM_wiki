@@ -32,4 +32,7 @@ if [ ! -f "$VAULT/SCHEMA.md" ]; then
 EOF
 fi
 
+# 4. SQLite 建表（IF NOT EXISTS 幂等）
+sqlite3 "$VAULT/meta.db" < "$ROOT/schema.sql"
+
 echo "✅ 初始化完成。下一步：docker compose up -d 启动 Streamlit；Obsidian 打开 $VAULT"
