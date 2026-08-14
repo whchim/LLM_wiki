@@ -109,5 +109,6 @@ def render():
                     write_trigger("compile", [r[1]], "streamlit")
                     update_compile_task(r[0], "pending")
                     st.success("已重新加入编译队列。")
+                    st.rerun()
     else:
         st.info("暂无编译任务。上传文件后等待 Claude Code 处理。")

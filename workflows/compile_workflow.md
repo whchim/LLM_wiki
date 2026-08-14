@@ -17,7 +17,7 @@
         - 资源摘要 → `NEXUS/资源/<标题>.md`（YAML: type=resource, status=active, fingerprint, source=<raw_path>）
           （资源摘要免审直接 active 入库（设计文档 4.4），概念页才进审核）
         - 概念页 → `pending_review/<概念名>.md`（YAML: type=concept, status=pending, source）
-      - 更新 index.md（资源节，幂等追加）
+      - 更新 index.md（资源节，幂等追加；同时维护头部统计行 `> 资源 N 篇 · 概念 M 个 · 最后更新 YYYY-MM-DD`，见设计文档 5.5）
       - `sqlite3` upsert knowledge_entries（资源 active + 概念 pending）
       - 更新 compile_tasks 状态 done/failed（error_msg 记录失败原因）
 2. 全部完成后写 `_triggers/review_<ts>.md`（本批所有概念页路径），供审核阶段消费

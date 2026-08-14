@@ -1,4 +1,4 @@
-import sys, os
+import sys, os, re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +64,24 @@ def test_reject_entry_drafts_and_records_reason(tmp_path, monkeypatch):
         assert conn.execute("SELECT status FROM knowledge_entries WHERE path='pending_review/示例监测产品.md'").fetchone()[0] == "draft"
         row = conn.execute("SELECT human_decision, reject_reason FROM pending_reviews WHERE id=?", (rid,)).fetchone()
         assert row == ("rejected", "内容与已有条目重复")
+
+def test_append_index_updates_stats_line(tmp_path, monkeypatch):
+    """设计文档 5.5：index.md 每次追加后更新头部统计行（资源/概念计数 + 日期）。"""
+    monkeypatch.setenv("KB_ROOT", str(tmp_path))
+    import importlib, ops
+    ops = importlib.reload(ops)
+    idx = tmp_path / "NEXUS" / "index.md"
+    idx.parent.mkdir(parents=True)
+    idx.write_text("# 知识库索引\n\n（编译时由 Claude Code 逐次更新）\n", encoding="utf-8")
+    ops._append_index("[[概念-示例监测产品]] → NEXUS/概念/示例监测产品.md")
+    text = idx.read_text(encoding="utf-8")
+    assert "## 概念\n- [[概念-示例监测产品]]" in text
+    assert re.search(r"> 资源 0 篇 · 概念 1 个 · 最后更新 \d{4}-\d{2}-\d{2}", text), text
+    # 二次追加：计数更新而非重复
+    ops._append_index("[[概念-叫应体系]] → NEXUS/概念/叫应体系.md")
+    text = idx.read_text(encoding="utf-8")
+    assert re.search(r"> 资源 0 篇 · 概念 2 个 · 最后更新 \d{4}-\d{2}-\d{2}", text), text
+    assert text.count("[[概念-示例监测产品]]") == 1
 
 def test_resubmit_returns_to_pending_and_clears_decision(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_ROOT", str(tmp_path))

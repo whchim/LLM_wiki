@@ -88,6 +88,30 @@ def resubmit(review_id: int, path: str) -> None:
     resubmit_review(review_id)
 
 
+def _count_section_lines(text: str, section: str) -> int:
+    """统计 index.md 某节（如「## 资源」）下以 '- ' 开头的条目行数。"""
+    m = re.search(rf"^## {section}\n(.*?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
+    if not m:
+        return 0
+    return len([ln for ln in m.group(1).splitlines() if ln.startswith("- ")])
+
+
+def _update_index_stats(text: str, today: str | None = None) -> str:
+    """维护 index.md 头部统计行（设计文档 5.5：每次追加后更新）。
+
+    `> 资源 N 篇 · 概念 M 个 · 最后更新 YYYY-MM-DD`
+    无统计行时在标题后插入一行。"""
+    res = _count_section_lines(text, "资源")
+    con = _count_section_lines(text, "概念")
+    today = today or datetime.now().strftime("%Y-%m-%d")
+    stats = f"> 资源 {res} 篇 · 概念 {con} 个 · 最后更新 {today}"
+    if re.search(r"^> 资源 \d+ 篇 · 概念 \d+ 个 · 最后更新 \S+", text, re.MULTILINE):
+        text = re.sub(r"^> 资源 \d+ 篇 · 概念 \d+ 个 · 最后更新 \S+", stats, text, count=1, flags=re.MULTILINE)
+    else:
+        text = re.sub(r"(# 知识库索引\n)", r"\1\n" + stats + "\n", text, count=1)
+    return text
+
+
 def _append_index(line: str) -> None:
     idx = Path(KB_ROOT) / "NEXUS" / "index.md"
     if not idx.exists():
@@ -100,4 +124,5 @@ def _append_index(line: str) -> None:
         text = re.sub(r"(## 概念\n)", r"\1- " + line + "\n", text, count=1)
     else:
         text += f"\n## 概念\n- {line}\n"
+    text = _update_index_stats(text)
     idx.write_text(text, encoding="utf-8")
