@@ -46,3 +46,10 @@ def test_sensitive_email():
 
 def test_sensitive_large_amount():
     assert check_sensitive("合同金额 3,527,891 元") == "warning"
+
+# ---- 中文紧邻无空格回归（2 例，评审 Critical-1）----
+def test_sensitive_id_card_no_space():
+    assert check_sensitive("身份证号110101199001011234") == "blocked"
+
+def test_sensitive_phone_no_space():
+    assert check_sensitive("手机号13812345678") == "warning"

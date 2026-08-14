@@ -16,13 +16,13 @@ def check_completeness(frontmatter_text: str, body_text: str) -> str:
 
 
 _SENSITIVE_RULES = [
-    (re.compile(r"\b\d{17}[\dXx]\b"), "blocked", "身份证号"),
-    (re.compile(r"\b1\d{10}\b"), "warning", "手机号"),
+    (re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)"), "blocked", "身份证号"),
+    (re.compile(r"(?<!\d)1\d{10}(?!\d)"), "warning", "手机号"),
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "warning", "邮箱"),
-    (re.compile(r"\b(?:sk-[A-Za-z0-9_-]{8,}|api[_-]?key\s*[:=]\s*\S+|token\s*[:=]\s*\S+|secret\s*[:=]\s*\S+)", re.IGNORECASE), "blocked", "密钥"),
-    (re.compile(r"(?:password|密码)\s*[:=]\s*\S+", re.IGNORECASE), "blocked", "明文密码"),
-    (re.compile(r"(?:\d[\d,]{6,}|\d+(?:\.\d+)?\s*万)\s*元"), "warning", "大额金额"),
-    (re.compile(r"(机密|绝密|内部|confidential)", re.IGNORECASE), "blocked", "内部标记"),
+    (re.compile(r"(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{8,}|api[_-]?key\s*[:=：＝]\s*\S+|token\s*[:=：＝]\s*\S+|secret\s*[:=：＝]\s*\S+)", re.IGNORECASE), "blocked", "密钥"),
+    (re.compile(r"(?:password|密码)\s*[:=：＝]\s*\S+", re.IGNORECASE), "blocked", "明文密码"),
+    (re.compile(r"(?<![\d.])(?:\d{7,}|\d{1,3}(?:,\d{3}){2,})\s*元|(?<![\d.])[1-9]\d{2,}(?:\.\d+)?万"), "warning", "大额金额"),
+    (re.compile(r"(机密|绝密|confidential|内部(?:资料|文件|机密|专用|使用|标记|水印))", re.IGNORECASE), "blocked", "内部标记"),
 ]
 
 
