@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  streamlit:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./vault:/app/vault        # Obsidian Vault（含 meta.db 与 _triggers/）
+    environment:
+      - KB_ROOT=/app/vault
+      - DB_PATH=/app/vault/meta.db
+    restart: unless-stopped
