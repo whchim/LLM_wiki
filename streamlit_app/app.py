@@ -23,7 +23,7 @@ with st.sidebar:
         nexus = os.path.join(kb, "NEXUS")
         res = subprocess.run(
             ["grep", "-rl", "--include=*.md", query.strip(), nexus],
-            capture_output=True, text=True)
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
         files = [l for l in res.stdout.splitlines() if l.strip()]
         insert_search_log(query.strip(), len(files), "streamlit")
         if files:
