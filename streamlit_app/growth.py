@@ -31,4 +31,4 @@ def render():
     if reports:
         st.markdown(Path(reports[0]).read_text(encoding="utf-8"))
     else:
-        st.info("尚无周报。Claude Code 执行 /process-growth 后生成（见 workflows/growth_workflow.md）。")
+        st.info("尚无周报。Claude Code 执行 /process-growth 命令后生成（见 workflows/growth_workflow.md）。")

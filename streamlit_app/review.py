@@ -41,10 +41,13 @@ def render():
                     st.markdown(full.read_text(encoding="utf-8"))
             c1, c2, c3 = st.columns(3)
             if c1.button("✓ 通过", key=f"ok_{rec['id']}"):
-                new_path = "NEXUS/概念/" + Path(rec["nexus_path"]).name
-                approve_entry(rec["id"], rec["nexus_path"], new_path)
-                st.success(f"已通过：{new_path}")
-                st.rerun()
+                try:
+                    target = approve_entry(rec["id"], rec["nexus_path"],
+                                           "NEXUS/概念/" + Path(rec["nexus_path"]).name)
+                    st.success(f"已通过：{target}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"操作失败：{e}")
             if c2.button("✗ 驳回", key=f"no_{rec['id']}"):
                 st.session_state[f"rejecting_{rec['id']}"] = True
             if st.session_state.get(f"rejecting_{rec['id']}"):
@@ -53,10 +56,14 @@ def render():
                     if not reason.strip():
                         st.error("驳回原因不能为空。")
                     else:
-                        reject_entry(rec["id"], rec["nexus_path"], reason)
-                        st.session_state.pop(f"rejecting_{rec['id']}", None)
-                        st.success("已驳回。")
-                        st.rerun()
+                        try:
+                            reject_entry(rec["id"], rec["nexus_path"], reason)
+                            st.session_state.pop(f"rejecting_{rec['id']}", None)
+                            st.success("已驳回。")
+                            st.rerun()
+                        except Exception as e:
+                            st.session_state.pop(f"rejecting_{rec['id']}", None)  # 异常时也弹掉标志，不 rerun
+                            st.error(f"操作失败：{e}")
             if c3.button("重试 AI 审核", key=f"ai_{rec['id']}"):
                 write_trigger("review", [rec["nexus_path"]], "streamlit")
                 st.success("已加入 AI 审核队列。")
@@ -68,7 +75,10 @@ def render():
         for rec in rejected:
             with st.expander(f"{rec.get('title') or Path(rec['nexus_path']).stem} — 驳回原因：{rec['reject_reason']}"):
                 if st.button("重新提交审核", key=f"rs_{rec['id']}"):
-                    resubmit(rec["id"], rec["nexus_path"])
-                    write_trigger("review", [rec["nexus_path"]], "streamlit")
-                    st.success("已重新提交 AI 审核。")
-                    st.rerun()
+                    try:
+                        resubmit(rec["id"], rec["nexus_path"])
+                        write_trigger("review", [rec["nexus_path"]], "streamlit")
+                        st.success("已重新提交 AI 审核。")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"操作失败：{e}")

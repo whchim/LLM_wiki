@@ -17,9 +17,6 @@ def test_write_trigger_atomic(tmp_path, monkeypatch):
     assert not list((Path(ops.KB_ROOT) / "_triggers").glob(".tmp_*"))  # 无残留临时文件
     text = p.read_text(encoding="utf-8")
     assert "kind: compile" in text and "RAW/a.md" in text
-    # 清理修复前旧版本可能写入真实 vault/_triggers/ 的残留（若有）
-    for stale in (ROOT / "vault" / "_triggers").glob("compile_*.md"):
-        stale.unlink()
 
 def test_validate_upload():
     assert validate_upload("a.md", 1024) is None

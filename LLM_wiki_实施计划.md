@@ -1759,3 +1759,5 @@ cd "d:\桌面\LLM_wiki" && git add -A && git commit -m "fix: 端到端验收修�
 - 新增 `streamlit_app/ops.py` 与 `streamlit_app/rules.py`（纯逻辑可单测，设计文档 9.2 未列，符合"UI 只做展示"原则）
 - Task 13 将 22 例拆为 rules.py 10 例 + 前序任务 12 例，总数 22 不变
 - 测试依赖本机 Python 3.11 + pytest + sqlite3 CLI；本机无 Python 时 Task 2-5/13 延后至 Docker 环境执行
+
+**5. 设计文档 10.2 缺口（转 Phase 2，不在 Demo 实现）**：去重指纹 3 例 + 文件名清洗 2 例，共 5 例因架构调整转移——去重（dedup）归属 LLM 审核维度（维度2，由审核 Agent 语义判定，非确定性指纹规则）；文件名清洗为 Agent 侧动作（上传时由 Claude Code/上传侧净化，非 Streamlit 校验规则）。均不在 Demo 实现范围内。
