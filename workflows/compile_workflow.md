@@ -14,7 +14,8 @@
       - 非 .md/.txt：用 Python 提取文本（pypdf / python-docx，本机无 Python 时报错并标记 failed）
       - 读全文 → 执行 prompts/compile_prompt.md → 解析 JSON（失败自动重试 1 次）
       - 按设计文档 5.3/5.4 落盘：
-        - 资源摘要 → `NEXUS/资源/<标题>.md`（YAML: type=resource, status=active, fingerprint）
+        - 资源摘要 → `NEXUS/资源/<标题>.md`（YAML: type=resource, status=active, fingerprint, source=<raw_path>）
+          （资源摘要免审直接 active 入库（设计文档 4.4），概念页才进审核）
         - 概念页 → `pending_review/<概念名>.md`（YAML: type=concept, status=pending, source）
       - 更新 index.md（资源节，幂等追加）
       - `sqlite3` upsert knowledge_entries（资源 active + 概念 pending）
