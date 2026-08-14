@@ -21,7 +21,7 @@
       - LLM 子 Agent（每维度一个，按 prompts/review_prompt.md 对应节）：
         - 维度2 去重（对候选列表）· 维度3 职务归属 · 维度4 质量（1-5分）· 维度6 合规
    d. 按 review_prompt.md 判定逻辑链汇总 verdict（sensitive=blocked 一票否决等）
-   e. `sqlite3` INSERT INTO pending_reviews (nexus_path, 'demo_user', department, ai_verdict, ai_scores=完整JSON, datetime('now','localtime'))
+   e. 写入审核结果：若该 nexus_path 已有 human_decision IS NULL 的行则 UPDATE 该行（按 id 更新 ai_verdict/ai_scores），否则 INSERT。调用 `streamlit_app/db.py` 的 `insert_review(nexus_path, 'demo_user', department, ai_verdict, ai_scores)` 函数签名（python -c 内联，如 `import sys; sys.path.insert(0, 'streamlit_app'); from db import insert_review; insert_review(...)`），不手写字段列表
 2. 触发文件处理完毕移入 vault/_triggers/done/
 3. 返回：审核 N 条、判定分布
 

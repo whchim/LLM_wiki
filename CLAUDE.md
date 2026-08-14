@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 企业级 LLM Wiki 知识库平台——基于 LLM Wiki 编译范式 + Google OKF 规范的知识流转系统（个人沉淀 → 审核流转 → 企业共享）。核心思想：入库时编译为结构化 Markdown（而非传统 RAG 每次查询重新检索）。
 
-**当前状态**：设计阶段。仅有需求文档、设计文档和 Prompt 文件，**尚无代码实现**。
+**当前状态**：Demo 已实现并验收通过（35/35 测试绿）。
+
+**快速启动**：`bash init.sh && docker compose up -d`（初始化数据库并启动 Streamlit 管理台）；知识浏览用 Obsidian 打开 `vault/`。
 
 ## 文档体系（文档驱动开发）
 

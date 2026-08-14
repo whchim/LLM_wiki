@@ -30,19 +30,20 @@ def _process_upload(files, category: str) -> tuple[int, list[str]]:
     saved_paths: list[str] = []
     errs: list[str] = []
     for f in files:
-        err_msg = validate_upload(f.name, f.size)
+        name = Path(f.name).name  # 净化：丢弃目录部分，防路径穿越（../ 等）
+        err_msg = validate_upload(name, f.size)
         if err_msg:
             errs.append(f"{f.name}：{err_msg}")
             continue
         raw_dir = Path(KB_ROOT) / "RAW" / category
         try:
             raw_dir.mkdir(parents=True, exist_ok=True)
-            (raw_dir / f.name).write_bytes(f.getbuffer())
+            (raw_dir / name).write_bytes(f.getbuffer())
         except OSError as e:
             errs.append(f"{f.name}：保存到 RAW 失败（{e}）。可能原因：磁盘空间不足或写入权限不足。"
                         f"建议：检查磁盘与权限后重试。")
             continue
-        saved_paths.append(f"RAW/{category}/{f.name}")
+        saved_paths.append(f"RAW/{category}/{name}")
 
     if not saved_paths:
         return 0, errs

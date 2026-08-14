@@ -35,7 +35,7 @@ def write_trigger(kind: str, paths: list[str], source: str) -> Path:
     """原子写触发文件（.tmp + mv），返回最终路径。kind: compile|review"""
     trig_dir = Path(KB_ROOT) / "_triggers"
     trig_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S%f")  # 微秒：防同秒多次触发同名碰撞
     final = trig_dir / f"{kind}_{ts}.md"
     tmp = trig_dir / f".tmp_{final.name}"
     body = f"""---
@@ -57,9 +57,13 @@ def _yaml_edit(path: Path, field: str, value: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def approve_entry(review_id: int, old_path: str, new_path: str) -> None:
-    """通过：移动文件 + YAML status=active + db 双写 + 追加 index.md。"""
+def approve_entry(review_id: int, old_path: str, new_path: str) -> str:
+    """通过：移动文件 + YAML status=active + db 双写 + 追加 index.md。
+
+    返回实际目标路径（同名冲突时含 -2 后缀）；源文件缺失时抛 FileNotFoundError。"""
     src = Path(KB_ROOT) / old_path
+    if not src.exists():
+        raise FileNotFoundError(f"文件不存在: {old_path}")
     dst = Path(KB_ROOT) / new_path
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():  # 同名冲突：追加 -2 后缀
@@ -70,6 +74,7 @@ def approve_entry(review_id: int, old_path: str, new_path: str) -> None:
     move_entry(old_path, dst.relative_to(Path(KB_ROOT)).as_posix(), "active")
     set_human_decision(review_id, "approved")
     _append_index(f"[[概念-{dst.stem}]] → {dst.relative_to(Path(KB_ROOT)).as_posix()}")
+    return dst.relative_to(Path(KB_ROOT)).as_posix()
 
 
 def reject_entry(review_id: int, path: str, reason: str) -> None:
