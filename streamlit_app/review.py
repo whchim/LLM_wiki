@@ -18,8 +18,11 @@ def render():
         st.info("暂无待审核条目。")
     for rec in pending:
         with st.expander(f"{rec.get('title') or Path(rec['nexus_path']).stem} — AI判定：{rec['ai_verdict'] or '未完成'}"):
-            if rec["ai_scores"]:
+            try:
                 scores = json.loads(rec["ai_scores"])
+            except (json.JSONDecodeError, TypeError):
+                scores = None
+            if isinstance(scores, dict):
                 cols = st.columns(5)
                 s = scores.get("scores", {})
                 cols[0].metric("完整性", s.get("completeness", "-"))
@@ -43,12 +46,15 @@ def render():
                 st.success(f"已通过：{new_path}")
                 st.rerun()
             if c2.button("✗ 驳回", key=f"no_{rec['id']}"):
+                st.session_state[f"rejecting_{rec['id']}"] = True
+            if st.session_state.get(f"rejecting_{rec['id']}"):
                 reason = st.text_input("驳回原因（必填）", key=f"reason_{rec['id']}")
                 if st.button("确认驳回", key=f"confirm_{rec['id']}"):
                     if not reason.strip():
                         st.error("驳回原因不能为空。")
                     else:
                         reject_entry(rec["id"], rec["nexus_path"], reason)
+                        st.session_state.pop(f"rejecting_{rec['id']}", None)
                         st.success("已驳回。")
                         st.rerun()
             if c3.button("重试 AI 审核", key=f"ai_{rec['id']}"):
