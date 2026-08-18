@@ -10,6 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **快速启动**：`bash init.sh && docker compose up -d`（初始化数据库并启动 Streamlit 管理台）；知识浏览用 Obsidian 打开 `vault/`。
 
+**测试**：`python -m pytest tests -q`。隔离目录固定为 `tests/_isolated/`（conftest 覆盖 tmp_path，不依赖系统 %TEMP%），在受限沙箱/CI 环境同样可跑。
+
 ## 文档体系（文档驱动开发）
 
 | 文档 | 角色 | 何时读 |

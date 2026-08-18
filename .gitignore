@@ -3,6 +3,12 @@ __pycache__/
 *.pyc
 .venv/
 
+# pytest
+.pytest_cache/
+tests/_isolated/
+.pytest_tmp/
+_tmp_*/
+
 # SQLite
 vault/meta.db
 vault/meta.db-*
