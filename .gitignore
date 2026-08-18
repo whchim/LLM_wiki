@@ -13,3 +13,6 @@ Thumbs.db
 
 # 用户本地配置（不提交）
 .claude/settings.local.json
+
+# 源文档导入区（暂存用，正式副本在 RAW/）
+vault/documents/
