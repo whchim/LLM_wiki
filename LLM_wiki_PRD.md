@@ -1,10 +1,10 @@
 # 企业级LLM Wiki知识库平台 —— 产品需求文档（PRD）
 
-**版本**：v1.7
-**状态**：Demo 就绪稿
+**版本**：v1.8
+**状态**：Phase 2 规划就绪稿
 **作者**：何豫东
-**日期**：2026年8月11日
-**变更**：架构简化——移除 MCP Server 桥接层，Claude Code 通过 Bash 工具直接操作 Vault 和 SQLite；四层架构（原六层减二：桥接层移除 + 元数据层并入存储层）
+**日期**：2026年8月19日
+**变更**：Phase 2 细化到 SP 级（见第七章路线图 SP1-SP5），多源同步与 React 前端划入 Phase 3，向量检索从 ChromaDB 改用 PostgreSQL + pgvector；新增 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md) 作为 Phase 2 主规划
 
 
 ## 一、产品概述
@@ -408,11 +408,11 @@ Claude Code agent 通过 Bash 工具直接操作 Obsidian Vault（文件系统�
 | **管理层 UI** | Streamlit | 文档上传、审核面板、自增长看板 | Demo |
 | **元数据存储** | SQLite | 知识条目索引 + 编译任务 + 审核记录 + 搜索日志 | Demo |
 | **知识存储** | 文件系统（Obsidian Vault） | OKF 兼容的 Markdown 文件 | Demo |
-| **向量检索** | ChromaDB | 语义检索（条目 > 1000 时替代 grep 全量匹配） | Phase 2 |
+| **向量检索** | PostgreSQL + pgvector | 语义检索（条目 > 1000 时替代 grep 全量匹配；Phase 2 随 SQLite→PostgreSQL 迁移直接用 pgvector 扩展，不引入独立向量库） | Phase 2 |
 | **后端 API** | FastAPI + REST | 真正后端（向量检索、JWT 认证、多用户 API） | Phase 2 |
 | **全文检索** | Obsidian 内置搜索 / grep | 精确匹配 | Demo |
-| **管理界面升级** | React 19 + Ant Design 5 + Vite 5 | 替代 Streamlit，完整企业级管理后台 | Phase 2 |
-| **生产数据库** | PostgreSQL | 替代 SQLite | Phase 2 |
+| **管理界面升级** | React 19 + Ant Design 5 + Vite 5 | 替代 Streamlit，完整企业级管理后台（移入 Phase 3；Phase 2 保留 Streamlit + JWT 登录） | Phase 3 |
+| **生产数据库** | PostgreSQL 16 + pgvector | 替代 SQLite 承载全部元数据 + 向量检索 | Phase 2 |
 | **知识图谱** | NetworkX / Neo4j | 实体关系图存储与图检索 | Phase 3 |
 
 > **架构原则**：不重造 Obsidian 擅长的轮子（知识浏览、图谱、wikilink）；不重造 Claude Code 擅长的轮子（LLM 调用、Agent 编排、并发、Bash 文件操作）；只做两者都不做的事（上传审批表单、自增长看板）。Demo 阶段目录结构和 SQL schema 稳定清晰，Bash 工具（grep/cat/sqlite3）完全覆盖所有数据操作需求——没必要为"封装文件系统"而引入一个独立进程。
@@ -703,16 +703,17 @@ Claude Code grep 直接读文件   不经过 SQLite，无一致性问题
 
 ### Phase 2：企业级能力（2-3个月）
 
-| 模块 | 功能 |
-|------|------|
-| 混合检索 | grep + 向量语义检索（ChromaDB）双通道 + re-rank |
-| 多源同步 | 冲突检测、去重、贡献者聚合、版本管理 |
-| 知识演进 | 新文档触发已有概念更新/修正建议 + 版本自动递增 |
-| 关联涌现 | 概念共引分析 → 合并/拆分/新建建议 |
-| 健康巡检 | 孤立节点、冲突、断链检测 + 周报自动生成 |
-| 前端升级 | React + Ant Design 管理后台，替代 Streamlit |
-| 安全 | JWT 认证 + 管理员/普通用户角色区分 |
-| 数据库 | 从 SQLite 迁移至 PostgreSQL |
+> **范围细化（v1.8）**：Phase 2 拆分为 5 个子项目（SP1-SP5），详细规划见 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md)。多源同步与 React 管理后台移入 Phase 3；审计日志并入 SP2、目录部门分类与 done/ 归档并入 SP5。
+
+| 子项目 | 模块 | 功能 |
+|------|------|------|
+| SP1 | 数据地基 | SQLite → PostgreSQL 16 + pgvector 扩展迁移；4 现有 + 4 新增表（audit_logs/contributors/conflicts/health_reports）；双写铁律保持 |
+| SP2 | API 与安全 | FastAPI REST API 化（上传/审核/搜索/管理）+ JWT 认证 + 管理员/普通用户角色 + 审计日志中间件 |
+| SP3 | 增量编译 | file watcher 监听 RAW 变更自动触发 + compile_tasks 断点续跑 + API/CLI 触发 |
+| SP4 | 混合检索 | grep 精确 + pgvector 向量语义双通道 + 权重融合 re-rank；向量=可重建缓存、grep=内建降级；目标 P99 < 3 秒 @ 1 万条目 |
+| SP5 | 知识智能 | 健康巡检 + 周报、知识演进（版本自增）、关联涌现（共引分析）、未命中判据重定义、部门分类、done/ 归档 |
+
+**Phase 2 不做（移入 Phase 3）**：多源同步、React 前端重写、知识图谱、外部源感知、完整 RBAC、分布式编译、审计闭环、生产部署、性能优化（10 万+ 条目 / 100 并发）。
 
 ### Phase 3：生产级（3-4个月）
 
@@ -1278,6 +1279,17 @@ dedup = similar → approved（加标注）
 - 头部层数修正：五层 → 四层（元数据层并入存储层，与第四章架构图一致）
 - 3.1 编译触发方式：明确为触发文件信号机制（_triggers/ + SessionStart hook + /process-triggers），移除失效的 `python -m ingest --all` CLI 残留
 - 9.1 docker-compose：统一 DB_PATH=/app/vault/meta.db，移除单独 meta.db 挂载（与 5.1 目录结构一致）
+
+**历史变更（v1.8）**——Phase 2 规划细化（依据 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md)）：
+
+🎯 Phase 2 范围细化：
+- 第七章 Phase 2 表重构为 5 个 SP（SP1 数据地基 / SP2 API与安全 / SP3 增量编译 / SP4 混合检索 / SP5 知识智能），删除原"多源同步""前端升级"独立行
+- 多源同步、React 管理后台移入 Phase 3（明确 Phase 2 不做清单）
+- 审计日志并入 SP2、目录部门分类与 done/ 归档并入 SP5
+
+🏗️ 技术选型调整：
+- 向量检索从 ChromaDB 改用 PostgreSQL + pgvector（随 SQLite→PostgreSQL 迁移直接同库承载，减少独立服务；带 Phase 3 重评开关）
+- Agent 宿主边界明确：Claude Code 掌 LLM、FastAPI 掌数据（替代 Bash 直连，不重造 Agent 编排）
 
 **历史变更（v1.6）**——架构重写 + 自增长：
 
