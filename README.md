@@ -23,11 +23,7 @@
 
 ## 核心架构（四层，无中间服务）
 
-```
-Obsidian（界面层：浏览/图谱/wikilink 导航） ←文件系统→ vault/（存储层：Markdown + meta.db）
-     ↑ Bash 工具                                      ↑ Python
-Claude Code（引擎层：编译/审核/问答 Agent）   ←HTTP→  Streamlit（管理层：上传/审核/看板）
-```
+![架构图](docs/diagrams/architecture.svg)
 
 **三个关键设计决策**：
 
@@ -70,6 +66,12 @@ streamlit run streamlit_app/app.py
 **LLM 引擎**：在项目根目录运行 Claude Code，键入 `/process-triggers` 处理上传队列、`/ask <问题>` 检索问答。
 
 > 非 CI 环境跑测试：`python -m pytest tests -q`（37 用例）。
+
+---
+
+## 核心闭环（个人沉淀 → 审核流转 → 企业共享 → 自增长）
+
+![知识流转闭环](docs/diagrams/flow.svg)
 
 ---
 

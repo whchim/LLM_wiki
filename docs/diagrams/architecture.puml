@@ -1,0 +1,76 @@
+@startuml architecture
+' LLM Wiki 知识库平台 —— 四层架构图（主图）
+' 生成：复制本文件内容到 https://www.plantuml.com/plantuml 或 PlantUML 插件
+' 若中文显示为方块，调整 defaultFontName（如 "Noto Sans CJK SC"）
+
+skinparam defaultFontName "Microsoft YaHei"
+skinparam componentStyle rectangle
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam packageTitleAlignment left
+
+title 企业级 LLM Wiki 知识库平台 · 四层架构（无中间服务）
+
+' ──────────── 界面层 ────────────
+package "界面层 · 知识界面" {
+  component "Obsidian Desktop" as OBS
+  note right of OBS
+    知识浏览 · 图谱可视化
+    wikilink 导航 · 全文搜索
+    YAML Frontmatter 原生支持
+  end note
+}
+
+' ──────────── 存储层 ────────────
+package "存储层 · 知识库" {
+  component "vault/\nMarkdown + YAML Frontmatter" as VAULT
+  database "meta.db\n(SQLite)" as DB
+  note right of DB
+    缓存不是权威
+    YAML 文件永远为准
+    rebuild_index 可重建
+  end note
+  VAULT .. DB : 双写（一致性）
+}
+
+' ──────────── 引擎层 ────────────
+package "引擎层 · Claude Code（LLM）" {
+  component "编译 Agent" as C_AGENT
+  component "审核 Agent" as R_AGENT
+  component "问答 Agent" as A_AGENT
+  component "Harness\n并行编排" as HARNESS
+  C_AGENT - HARNESS
+  R_AGENT - HARNESS
+  A_AGENT - HARNESS
+  note left of HARNESS
+    pipeline 批量编译
+    parallel 六维度审核
+  end note
+}
+
+' ──────────── 管理层 ────────────
+package "管理层 · Streamlit" {
+  component "上传页" as P_UPLOAD
+  component "审核页" as P_REVIEW
+  component "自增长看板" as P_GROWTH
+}
+
+' ──────────── 连接（无中间服务） ────────────
+OBS -- VAULT : 文件系统直接读写
+
+C_AGENT - VAULT : Bash 工具\n(grep / cat / sqlite3)
+R_AGENT - VAULT : Bash 工具
+A_AGENT - VAULT : Bash 工具
+
+P_UPLOAD -- VAULT : Python 直接读写
+P_REVIEW -- VAULT : Python 直接读写
+P_GROWTH -- VAULT : Python 直接读写
+P_GROWTH .. DB : 聚合查询
+
+' 触发文件消息队列（异步解耦）
+P_UPLOAD ..> "_triggers/\ncompile_*.md" : 原子写
+P_REVIEW ..> "_triggers/\nreview_*.md" : 原子写
+"_triggers/\ncompile_*.md" ..> C_AGENT : 消费
+"_triggers/\nreview_*.md" ..> R_AGENT : 消费
+
+@enduml
