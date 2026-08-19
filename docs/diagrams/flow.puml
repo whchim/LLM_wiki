@@ -1,0 +1,59 @@
+@startuml flow
+' LLM Wiki 知识库平台 —— 知识流转闭环图（第二张）
+' 生成：复制本文件内容到 https://www.plantuml.com/plantuml 或 PlantUML 插件
+' 若中文显示为方块，调整 defaultFontName
+
+skinparam defaultFontName "Microsoft YaHei"
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+
+title 核心闭环：个人沉淀 → 审核流转 → 企业共享 → 自增长
+
+start
+
+:用户上传文档（Streamlit）;
+note right
+  格式/大小校验
+  落盘 vault/RAW/
+  原子写触发文件 _triggers/compile_*.md
+end note
+
+:Claude Code 编译（SHA256 指纹缓存，命中即跳过 LLM）;
+note right
+  编译 Agent 读取 RAW
+  执行 compile_prompt
+  输出 资源摘要 + 概念页
+end note
+
+split
+  :资源摘要 → NEXUS/资源/（1:1 映射，直接发布）;
+  split again
+    :概念页 → pending_review/（status=pending）;
+  end split
+
+:六维度审核（确定性规则 + LLM 并行）;
+note right
+  完整性 / 敏感信息 → 确定性规则（rules.py）
+  质量 / 合规 / 去重 / 职务归属 → LLM
+  敏感 blocked → 一票否决
+end note
+
+if (人工在 Streamlit 通过?) then (是)
+  :移入 NEXUS/概念/（双写 YAML + SQLite）;
+else (否)
+  :驳回 → status=draft，可重新提交审核;
+  stop
+endif
+
+:自然语言检索（Obsidian 全文 / /ask 问答）;
+:搜索缺口记录（match_count=0 → search_logs）;
+
+:自增长看板展示缺口 Top 20 → 驱动补文档;
+
+repeat
+  :上传缺失文档;
+repeat while (缺口是否缩小?) is (否)
+
+stop
+
+@enduml
