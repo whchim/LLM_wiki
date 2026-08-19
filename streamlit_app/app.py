@@ -5,8 +5,10 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 
 import streamlit as st
-from db import rebuild_index, insert_search_log, get_conn
+from db import ensure_schema, rebuild_index, insert_search_log, get_conn
 from ops import write_trigger
+
+ensure_schema()  # 自愈：clone 后无需 init.sh 也能建表建目录（幂等）
 
 st.set_page_config(page_title="LLM Wiki 管理台", layout="wide")
 

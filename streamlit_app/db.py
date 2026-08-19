@@ -7,6 +7,32 @@ from typing import Iterator
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "..", "vault", "meta.db"))
 KB_ROOT = os.environ.get("KB_ROOT", os.path.join(os.path.dirname(__file__), "..", "vault"))
 
+# schema.sql 所在目录（仓库根 = 本文件 ../）
+_SCHEMA = os.path.join(os.path.dirname(__file__), "..", "schema.sql")
+
+# KB 启动必须存在的目录（与 init.sh 一致，clone 后部分目录不入库，需自愈）
+_REQUIRED_DIRS = [
+    "RAW/个人_notes", "RAW/会议", "RAW/经验", "RAW/项目",
+    "pending_review",
+    "NEXUS/资源", "NEXUS/概念", "NEXUS/研究",
+    "_triggers", "_triggers/done",
+]
+
+
+def ensure_schema() -> None:
+    """自愈初始化：确保 Vault 目录树存在 + meta.db 建表（幂等）。
+
+    供 Streamlit 启动时调用——即使跳过 init.sh 也能安全运行；
+    clone 后空目录/缺失目录在此补齐。"""
+    for rel in _REQUIRED_DIRS:
+        os.makedirs(os.path.join(KB_ROOT, rel), exist_ok=True)
+    if not os.path.exists(os.path.dirname(DB_PATH)):
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    with open(_SCHEMA, encoding="utf-8") as f:
+        ddl = f.read()
+    with get_conn() as conn:
+        conn.executescript(ddl)
+
 
 @contextmanager
 def get_conn() -> Iterator[sqlite3.Connection]:
