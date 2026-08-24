@@ -32,7 +32,10 @@ if [ ! -f "$VAULT/SCHEMA.md" ]; then
 EOF
 fi
 
-# 4. SQLite 建表（IF NOT EXISTS 幂等）
-sqlite3 "$VAULT/meta.db" < "$ROOT/schema.sql"
+# 4. 数据库初始化（Phase 2 SP1：SQLite → PostgreSQL）
+# PostgreSQL 建表由应用启动时 ensure_schema() 幂等完成（schema.sql），
+# 不在此以 sqlite3 创建。本地/CI 需先启动 PG：
+#   docker compose up -d db         # 发布 5432，供本机开发/测试
+#   python tools/migrate_to_pg.py   # 一次性：迁移旧 vault/meta.db 数据
 
-echo "✅ 初始化完成。下一步：docker compose up -d 启动 Streamlit；Obsidian 打开 $VAULT"
+echo "✅ 初始化完成。下一步：docker compose up -d 启动 Streamlit（自动联 PostgreSQL）；Obsidian 打开 $VAULT"

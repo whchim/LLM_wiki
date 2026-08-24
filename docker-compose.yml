@@ -1,12 +1,35 @@
-version: '3.8'
 services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: llmwiki
+      POSTGRES_USER: llmwiki
+      POSTGRES_PASSWORD: llmwiki
+    ports:
+      - "5432:5432"           # 本机开发/测试直连（DOCKER DAEMON 持有）
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmwiki -d llmwiki"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   streamlit:
     build: .
     ports:
       - "8501:8501"
     volumes:
-      - ./vault:/app/vault        # Obsidian Vault（含 meta.db 与 _triggers/）
+      - ./vault:/app/vault        # Obsidian Vault（存放知识 Markdown 与 _triggers/；meta.db 已退役）
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       - KB_ROOT=/app/vault
-      - DB_PATH=/app/vault/meta.db
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=llmwiki
+      - DB_USER=llmwiki
+      - DB_PASS=llmwiki
     restart: unless-stopped
+volumes:
+  pgdata:

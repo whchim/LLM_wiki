@@ -4,7 +4,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from db import get_conn, insert_compile_task, update_compile_task
+from db import list_recent_compile_tasks, insert_compile_task, update_compile_task
 from ops import validate_upload, sha256_file, write_trigger
 
 KB_ROOT = os.environ.get("KB_ROOT", os.path.join(os.path.dirname(__file__), "..", "vault"))
@@ -94,21 +94,19 @@ def render():
     st.subheader("编译任务状态")
     if st.button("刷新"):
         st.rerun()
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, raw_path, status, error_msg, completed_at "
-            "FROM compile_tasks ORDER BY id DESC LIMIT 50").fetchall()
+    rows = list_recent_compile_tasks(50)
     if rows:
-        data = [{"任务": r[0], "文件": r[1], "状态": r[2], "错误": r[3] or "", "完成时间": r[4] or ""} for r in rows]
+        data = [{"任务": r["id"], "文件": r["raw_path"], "状态": r["status"],
+                 "错误": r["error_msg"] or "", "完成时间": r["completed_at"] or ""} for r in rows]
         st.dataframe(data, use_container_width=True)
         # 重试：仅 failed 行
-        failed = [r for r in rows if r[2] == "failed"]
+        failed = [r for r in rows if r["status"] == "failed"]
         if failed:
             st.warning(f"{len(failed)} 个任务失败。")
             for r in failed:
-                if st.button(f"重试：{r[1]}", key=f"retry_{r[0]}"):
-                    write_trigger("compile", [r[1]], "streamlit")
-                    update_compile_task(r[0], "pending")
+                if st.button(f"重试：{r['raw_path']}", key=f"retry_{r['id']}"):
+                    write_trigger("compile", [r["raw_path"]], "streamlit")
+                    update_compile_task(r["id"], "pending")
                     st.success("已重新加入编译队列。")
                     st.rerun()
     else:
