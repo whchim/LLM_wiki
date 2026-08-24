@@ -1,37 +1,44 @@
-import sys, os, re
+import importlib
+import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "streamlit_app"))
 
-import sqlite3
+import db  # conftest 已重载并重置测试库 schema
 from ops import write_trigger, validate_upload, approve_entry, reject_entry, resubmit, sha256_file
+
+
+def _reload_ops_for(kb_root):
+    """设置 KB_ROOT 并重载 ops，使其文件操作落在指定目录。"""
+    import ops
+    return importlib.reload(ops)
+
 
 def test_write_trigger_atomic(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_ROOT", str(tmp_path))
     (tmp_path / "_triggers").mkdir()
-    import importlib, ops
-    ops = importlib.reload(ops)  # 重新求值 KB_ROOT，指向 monkeypatch 后的 tmp_path
+    ops = _reload_ops_for(tmp_path)
     p = ops.write_trigger("compile", ["RAW/a.md", "RAW/b.md"], "streamlit")
     assert p.name.startswith("compile_") and p.name.endswith(".md")
     assert not list((Path(ops.KB_ROOT) / "_triggers").glob(".tmp_*"))  # 无残留临时文件
     text = p.read_text(encoding="utf-8")
     assert "kind: compile" in text and "RAW/a.md" in text
 
+
 def test_validate_upload():
     assert validate_upload("a.md", 1024) is None
     assert validate_upload("a.jpg", 1024) is not None
     assert validate_upload("a.pdf", 11 * 1024 * 1024) is not None
 
+
 def test_approve_entry_moves_and_double_writes(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_ROOT", str(tmp_path))
-    monkeypatch.setenv("DB_PATH", str(tmp_path / "t.db"))
-    sqlite3.connect(tmp_path / "t.db").executescript((ROOT / "schema.sql").read_text(encoding="utf-8"))
     (tmp_path / "pending_review").mkdir(); (tmp_path / "NEXUS" / "概念").mkdir(parents=True)
     src = tmp_path / "pending_review" / "示例监测产品.md"
     src.write_text("---\ntype: concept\ntitle: 示例监测产品\nstatus: pending\n---\n正文", encoding="utf-8")
-    import importlib, db, ops
-    db = importlib.reload(db); ops = importlib.reload(ops)
+    ops = _reload_ops_for(tmp_path)
     db.upsert_entry("pending_review/示例监测产品.md", "concept", "示例监测产品", "产品", "pending", "V1.0", None, "2026-08-13")
     rid = db.insert_review("pending_review/示例监测产品.md", "demo_user", "产品", "approved", "{}")
     ops.approve_entry(rid, "pending_review/示例监测产品.md", "NEXUS/概念/示例监测产品.md")
@@ -41,17 +48,15 @@ def test_approve_entry_moves_and_double_writes(tmp_path, monkeypatch):
     assert "status: active" in text
     with db.get_conn() as conn:
         assert conn.execute("SELECT status FROM knowledge_entries WHERE path='NEXUS/概念/示例监测产品.md'").fetchone()[0] == "active"
-        assert conn.execute("SELECT human_decision FROM pending_reviews WHERE id=?", (rid,)).fetchone()[0] == "approved"
+        assert conn.execute("SELECT human_decision FROM pending_reviews WHERE id=%s", (rid,)).fetchone()[0] == "approved"
+
 
 def test_reject_entry_drafts_and_records_reason(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_ROOT", str(tmp_path))
-    monkeypatch.setenv("DB_PATH", str(tmp_path / "t.db"))
-    sqlite3.connect(tmp_path / "t.db").executescript((ROOT / "schema.sql").read_text(encoding="utf-8"))
     (tmp_path / "pending_review").mkdir()
     src = tmp_path / "pending_review" / "示例监测产品.md"
     src.write_text("---\ntype: concept\ntitle: 示例监测产品\nstatus: pending\n---\n正文", encoding="utf-8")
-    import importlib, db, ops
-    db = importlib.reload(db); ops = importlib.reload(ops)
+    ops = _reload_ops_for(tmp_path)
     db.upsert_entry("pending_review/示例监测产品.md", "concept", "示例监测产品", "产品", "pending", "V1.0", None, "2026-08-13")
     rid = db.insert_review("pending_review/示例监测产品.md", "demo_user", "产品", "approved", "{}")
     ops.reject_entry(rid, "pending_review/示例监测产品.md", "内容与已有条目重复")
@@ -59,14 +64,14 @@ def test_reject_entry_drafts_and_records_reason(tmp_path, monkeypatch):
     assert "status: draft" in src.read_text(encoding="utf-8")
     with db.get_conn() as conn:
         assert conn.execute("SELECT status FROM knowledge_entries WHERE path='pending_review/示例监测产品.md'").fetchone()[0] == "draft"
-        row = conn.execute("SELECT human_decision, reject_reason FROM pending_reviews WHERE id=?", (rid,)).fetchone()
+        row = conn.execute("SELECT human_decision, reject_reason FROM pending_reviews WHERE id=%s", (rid,)).fetchone()
         assert row == ("rejected", "内容与已有条目重复")
+
 
 def test_append_index_updates_stats_line(tmp_path, monkeypatch):
     """设计文档 5.5：index.md 每次追加后更新头部统计行（资源/概念计数 + 日期）。"""
     monkeypatch.setenv("KB_ROOT", str(tmp_path))
-    import importlib, ops
-    ops = importlib.reload(ops)
+    ops = _reload_ops_for(tmp_path)
     idx = tmp_path / "NEXUS" / "index.md"
     idx.parent.mkdir(parents=True)
     idx.write_text("# 知识库索引\n\n（编译时由 Claude Code 逐次更新）\n", encoding="utf-8")
@@ -80,15 +85,13 @@ def test_append_index_updates_stats_line(tmp_path, monkeypatch):
     assert re.search(r"> 资源 0 篇 · 概念 2 个 · 最后更新 \d{4}-\d{2}-\d{2}", text), text
     assert text.count("[[概念-示例监测产品]]") == 1
 
+
 def test_resubmit_returns_to_pending_and_clears_decision(tmp_path, monkeypatch):
     monkeypatch.setenv("KB_ROOT", str(tmp_path))
-    monkeypatch.setenv("DB_PATH", str(tmp_path / "t.db"))
-    sqlite3.connect(tmp_path / "t.db").executescript((ROOT / "schema.sql").read_text(encoding="utf-8"))
     (tmp_path / "pending_review").mkdir()
     src = tmp_path / "pending_review" / "示例监测产品.md"
     src.write_text("---\ntype: concept\ntitle: 示例监测产品\nstatus: draft\n---\n正文", encoding="utf-8")
-    import importlib, db, ops
-    db = importlib.reload(db); ops = importlib.reload(ops)
+    ops = _reload_ops_for(tmp_path)
     db.upsert_entry("pending_review/示例监测产品.md", "concept", "示例监测产品", "产品", "draft", "V1.0", None, "2026-08-13")
     rid = db.insert_review("pending_review/示例监测产品.md", "demo_user", "产品", "approved", "{}")
     db.set_human_decision(rid, "rejected", "原因")
@@ -97,5 +100,5 @@ def test_resubmit_returns_to_pending_and_clears_decision(tmp_path, monkeypatch):
     assert "status: pending" in src.read_text(encoding="utf-8")
     with db.get_conn() as conn:
         assert conn.execute("SELECT status FROM knowledge_entries WHERE path='pending_review/示例监测产品.md'").fetchone()[0] == "pending"
-        row = conn.execute("SELECT human_decision, reject_reason FROM pending_reviews WHERE id=?", (rid,)).fetchone()
+        row = conn.execute("SELECT human_decision, reject_reason FROM pending_reviews WHERE id=%s", (rid,)).fetchone()
         assert row == (None, None)  # human_decision 清空、reject_reason 清空
