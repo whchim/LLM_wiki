@@ -44,28 +44,33 @@
 
 ## 快速开始（clone 后即可运行）
 
-自愈设计：应用启动时自动建表建目录，**无需预置数据库**。
+自愈设计：应用启动时自动建表建目录、创建初始管理员，**无需预置数据库**。
 
 ```bash
 git clone git@github.com:whchim/LLM_wiki.git && cd LLM_wiki
 
 # 方式 A：Docker（推荐）
-docker compose up -d          # 启动 Streamlit 管理台
-# 打开 http://localhost:8501
+docker compose up -d          # 启动 PostgreSQL + FastAPI API + Streamlit 管理台
+# 打开 http://localhost:8501 → 登录（默认 admin / admin123，建议首次登录后修改）
 
 # 方式 B：本地 Python（可选）
-bash init.sh                  # 初始化 Vault 目录树 + SQLite 建表（幂等）
+bash init.sh                  # 初始化 Vault 目录树 + 建表（幂等）
 pip install -r requirements.txt
+uvicorn api.main:app --port 8000 &   # 先起 API（需 PostgreSQL 在 5432）
 streamlit run streamlit_app/app.py
 ```
 
+**服务端口**：Streamlit 管理台 `:8501` ｜ FastAPI REST API `:8000`（交互文档 `/docs`）｜ PostgreSQL `:5432`。
+
+**默认账号**：`admin / admin123`（环境变量 `ADMIN_INIT_USER/ADMIN_INIT_PASS` 可改）。
+
 **知识浏览**：用 [Obsidian](https://obsidian.md/) 打开 `vault/` 目录，即可看到编译产物的图谱、wikilink 导航、反向链接。
 
-> clone 后知识索引初始为空（meta.db 不入库）。沿下方"核心闭环"走一遍上传→编译→审核流程，知识库即开始增长；索引当前规模见"真实数据验收"节。
+> clone 后知识索引初始为空。沿下方"核心闭环"走一遍上传→编译→审核流程，知识库即开始增长；索引当前规模见"真实数据验收"节。
 
 **LLM 引擎**：在项目根目录运行 Claude Code，键入 `/process-triggers` 处理上传队列、`/ask <问题>` 检索问答。
 
-> 非 CI 环境跑测试：`python -m pytest tests -q`（37 用例）。
+> 跑测试：`docker compose up -d db` 后 `python -m pytest tests -q`（无 PG 时设 `PYTEST_SKIP_NO_DB=1` 跳过）
 
 ---
 

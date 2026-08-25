@@ -1,24 +1,32 @@
+"""自增长看板：统计/缺口经 API；周报直读共享卷（只读）。"""
 import glob
 import os
 from pathlib import Path
 
 import streamlit as st
 
-from db import get_conn, top_missed_queries, search_stats
+from api_client import ApiClient, ApiError
 
 KB_ROOT = os.environ.get("KB_ROOT", os.path.join(os.path.dirname(__file__), "..", "vault"))
 
 
-def render():
+def render() -> None:
+    api: ApiClient = st.session_state["api"]
     st.header("自增长看板")
-    stats = search_stats()
+
+    try:
+        stats = api.stats()
+        top = api.missed(20).get("items", [])
+    except ApiError as e:
+        st.error(f"加载看板数据失败：{e.message}")
+        return
+
     c1, c2 = st.columns(2)
-    c1.metric("总搜索次数", stats["total"])
-    c2.metric("未命中率", f"{stats['miss_rate'] * 100:.0f}%")
+    c1.metric("总搜索次数", stats.get("total", 0))
+    c2.metric("未命中率", f"{stats.get('miss_rate', 0) * 100:.0f}%")
     st.divider()
 
     st.subheader("搜索未命中 Top 20（知识缺口）")
-    top = top_missed_queries(20)
     if top:
         st.dataframe([{"缺口查询": t["query"], "搜索次数": t["cnt"], "最近出现": t["last_seen"]} for t in top],
                      use_container_width=True)

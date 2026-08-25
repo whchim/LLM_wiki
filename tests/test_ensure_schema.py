@@ -29,7 +29,8 @@ def test_ensure_schema_creates_dirs_and_tables_in_fresh_clone(tmp_path, monkeypa
                 "_triggers", "_triggers/done"):
         assert (tmp_path / "vault" / rel).is_dir(), f"缺失目录 {rel}"
     # 表已建
-    assert {"knowledge_entries", "compile_tasks", "pending_reviews", "search_logs"} <= _tables()
+    assert {"knowledge_entries", "compile_tasks", "pending_reviews", "search_logs",
+            "users"} <= _tables()
 
 
 def test_ensure_schema_is_idempotent(tmp_path, monkeypatch):
@@ -40,4 +41,4 @@ def test_ensure_schema_is_idempotent(tmp_path, monkeypatch):
     m.ensure_schema()
     m.ensure_schema()
     assert _tables() == {"knowledge_entries", "compile_tasks", "pending_reviews",
-                         "search_logs", "audit_logs", "contributors", "conflicts"}
+                         "search_logs", "audit_logs", "contributors", "conflicts", "users"}

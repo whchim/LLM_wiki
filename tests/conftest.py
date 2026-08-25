@@ -108,4 +108,6 @@ def _env(monkeypatch, tmp_path, request):
     import db
     db.close_pool()          # 关闭上一测试遗留的池（避免后台线程泄漏）
     importlib.reload(db)     # 重载，令 DB_CONFIG 读到测试库 env
+    import ops
+    importlib.reload(ops)    # ops.KB_ROOT 随 env 重载（approve/reject/write_trigger 用）
     _reset_schema()
