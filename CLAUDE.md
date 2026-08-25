@@ -16,8 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 文档 | 角色 | 何时读 |
 |------|------|--------|
-| [LLM_wiki_PRD.md](LLM_wiki_PRD.md) | 需求唯一来源（v1.7） | 一切需求的裁决依据 |
-| [LLM_wiki_设计文档.md](LLM_wiki_设计文档.md) | 可直接编码的详细设计（v0.1） | 实现前必读，含目录结构、SQLite DDL、函数签名、触发机制 |
+| [docs/LLM_wiki_PRD.md](docs/LLM_wiki_PRD.md) | 需求唯一来源（v1.8） | 一切需求的裁决依据 |
+| [docs/LLM_wiki_设计文档.md](docs/LLM_wiki_设计文档.md) | 可直接编码的详细设计（v0.1） | 实现前必读，含目录结构、SQLite DDL、函数签名、触发机制 |
+| [docs/LLM_wiki_Phase2_路线图.md](docs/LLM_wiki_Phase2_路线图.md) | Phase 2 主规划（SP1-SP5） | 进入 Phase 2 工作前 |
 | [prompts/](prompts/) | 3 个 Agent 系统提示词（编译/审核/问答） | 修改 Agent 行为时 |
 
 **规则**：需求冲突时 PRD 为准；设计细节冲突时设计文档为准（其 1.5 节记录与 PRD 的一致性说明）。修改设计前先检查是否影响 PRD，反之亦然。

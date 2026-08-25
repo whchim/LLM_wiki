@@ -123,7 +123,7 @@ SP1 ──┬──→ SP2 ──→ SP3 ──→ SP4
 
 ## 八、文档落地
 
-- 本文档（`LLM_wiki_Phase2_路线图.md`）为 Phase 2 主规划，放项目根，与 PRD/设计文档/实施计划同层。
+- 本文档（`docs/LLM_wiki_Phase2_路线图.md`）为 Phase 2 主规划，与 PRD/设计文档/实施计划同放 `docs/` 目录。
 - PRD 升 v1.8：第七章 Phase 2 表细化到 SP 级，多源同步/React 移入 Phase 3。
 - 后续每个 SP 单独走「设计文档 → 实施计划」流程，首个子项目为 **SP1 数据地基**。
 

@@ -132,9 +132,11 @@
 
 ```
 llm-wiki-demo/                      # 项目根目录（Claude Code 工作目录）
-├── LLM_wiki_PRD.md                 # 需求文档（v1.7）
-├── LLM_wiki_设计文档.md            # 本文档
-├── docker-compose.yml              # 单容器：Streamlit
+├── docs/                           # 文档体系（PRD/设计/实施/Phase2 规划）
+│   ├── LLM_wiki_PRD.md             # 需求文档（v1.8）
+│   ├── LLM_wiki_设计文档.md        # 本文档
+│   └── diagrams/                   # 架构图/流程 SVG
+├── docker-compose.yml              # 三容器：db(postgres) + api(FastAPI) + streamlit
 ├── Dockerfile                      # Streamlit 镜像
 ├── requirements.txt                # streamlit, pyyaml, pandas（仅容器用）
 ├── .env.example                    # 环境变量模板

@@ -101,9 +101,10 @@ streamlit run streamlit_app/app.py
 
 | 文档 | 内容 |
 |------|------|
-| [`LLM_wiki_PRD.md`](LLM_wiki_PRD.md) | 需求唯一来源 v1.7：4 类角色 / 6 大模块 / 迭代路线图 / 错误 UX 文案 |
-| [`LLM_wiki_设计文档.md`](LLM_wiki_设计文档.md) | 可直接编码的详细设计 v0.1：目录结构 / SQLite DDL / 函数签名 / Agent 输入输出契约 / 触发机制 |
-| [`LLM_wiki_实施计划.md`](LLM_wiki_实施计划.md) | 15 个实施 task，逐个 diff 评审 + 回归测试 |
+| [`docs/LLM_wiki_PRD.md`](docs/LLM_wiki_PRD.md) | 需求唯一来源 v1.8：4 类角色 / 6 大模块 / 迭代路线图 / 错误 UX 文案 |
+| [`docs/LLM_wiki_设计文档.md`](docs/LLM_wiki_设计文档.md) | 可直接编码的详细设计 v0.1：目录结构 / SQLite DDL / 函数签名 / Agent 输入输出契约 / 触发机制 |
+| [`docs/LLM_wiki_实施计划.md`](docs/LLM_wiki_实施计划.md) | 15 个实施 task，逐个 diff 评审 + 回归测试 |
+| [`docs/LLM_wiki_Phase2_路线图.md`](docs/LLM_wiki_Phase2_路线图.md) | Phase 2 主规划（SP1-SP5 拆分 / 排期 / 决策 / 退出标准） |
 
 - **发现并修正 3 处 PRD 内部不一致**（架构层数、MCP Server 取舍、编译触发机制）
 - **开发范式收敛**：SDD（编译产物/检索，输入输出可形式化）+ TDD（审核确定性规则/数据层）；LLM 输出非确定部分明确不做 BDD
