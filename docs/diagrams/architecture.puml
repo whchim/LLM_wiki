@@ -1,5 +1,5 @@
 @startuml architecture
-' LLM Wiki 知识库平台 —— 四层架构图（主图）
+' LLM Wiki 知识库平台 —— 架构图（Phase 2：三容器 + LLM 引擎）
 ' 生成：复制本文件内容到 https://www.plantuml.com/plantuml 或 PlantUML 插件
 ' 若中文显示为方块，调整 defaultFontName（如 "Noto Sans CJK SC"）
 
@@ -9,28 +9,43 @@ skinparam backgroundColor #FFFFFF
 skinparam shadowing false
 skinparam packageTitleAlignment left
 
-title 企业级 LLM Wiki 知识库平台 · 四层架构（无中间服务）
+title 企业级 LLM Wiki 知识库平台 · 三容器架构（FastAPI 掌数据 / Claude Code 掌 LLM）
 
 ' ──────────── 界面层 ────────────
-package "界面层 · 知识界面" {
+package "界面层" {
   component "Obsidian Desktop" as OBS
   note right of OBS
     知识浏览 · 图谱可视化
     wikilink 导航 · 全文搜索
-    YAML Frontmatter 原生支持
+  end note
+}
+
+' ──────────── 服务层（容器） ────────────
+package "服务层（Docker Compose）" {
+  component "Streamlit 管理台\n:8501" as ST
+  component "FastAPI API\n:8000" as API
+  component "PostgreSQL 16\n+ pgvector :5432" as PG
+
+  ST ..> API : HTTP / JWT Bearer
+  API --> PG : psycopg3 连接池
+  ST ..> PG : 只读直查（看板统计）
+  note right of API
+    JWT 认证（admin/reviewer/user）
+    审计日志（audit_logs）
+    上传/审核/搜索/管理 REST 端点
+    不调用 LLM（触发文件交给 Claude Code）
   end note
 }
 
 ' ──────────── 存储层 ────────────
-package "存储层 · 知识库" {
+package "存储层（知识库）" {
   component "vault/\nMarkdown + YAML Frontmatter" as VAULT
-  database "meta.db\n(SQLite)" as DB
-  note right of DB
-    缓存不是权威
-    YAML 文件永远为准
-    rebuild_index 可重建
+  note right of VAULT
+    YAML 规范源 · 双写
+    rebuild_index 可重建缓存
+    _triggers/ 触发文件消息队列
   end note
-  VAULT .. DB : 双写（一致性）
+  PG .. VAULT : 双写（YAML 为准）
 }
 
 ' ──────────── 引擎层 ────────────
@@ -48,28 +63,20 @@ package "引擎层 · Claude Code（LLM）" {
   end note
 }
 
-' ──────────── 管理层 ────────────
-package "管理层 · Streamlit" {
-  component "上传页" as P_UPLOAD
-  component "审核页" as P_REVIEW
-  component "自增长看板" as P_GROWTH
-}
-
-' ──────────── 连接（无中间服务） ────────────
+' ──────────── 连接 ────────────
 OBS -- VAULT : 文件系统直接读写
 
-C_AGENT - VAULT : Bash 工具\n(grep / cat / sqlite3)
+C_AGENT - VAULT : Bash 工具\n(grep / cat / 重定向)
 R_AGENT - VAULT : Bash 工具
 A_AGENT - VAULT : Bash 工具
 
-P_UPLOAD -- VAULT : Python 直接读写
-P_REVIEW -- VAULT : Python 直接读写
-P_GROWTH -- VAULT : Python 直接读写
-P_GROWTH .. DB : 聚合查询
+' 容器与 vault：共享卷（./vault 挂载）
+ST -- VAULT : 共享卷（只读预览）
+API -- VAULT : 共享卷（上传落盘/触发）
 
-' 触发文件消息队列（异步解耦）
-P_UPLOAD ..> "_triggers/\ncompile_*.md" : 原子写
-P_REVIEW ..> "_triggers/\nreview_*.md" : 原子写
+' 触发文件消息队列（异步解耦管理台 ↔ LLM 引擎）
+API ..> "_triggers/\ncompile_*.md" : 原子写
+API ..> "_triggers/\nreview_*.md" : 原子写
 "_triggers/\ncompile_*.md" ..> C_AGENT : 消费
 "_triggers/\nreview_*.md" ..> R_AGENT : 消费
 

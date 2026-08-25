@@ -39,7 +39,7 @@ note right
 end note
 
 if (人工在 Streamlit 通过?) then (是)
-  :移入 NEXUS/概念/（双写 YAML + SQLite）;
+  :移入 NEXUS/概念/（双写 YAML + PostgreSQL）;
 else (否)
   :驳回 → status=draft，可重新提交审核;
   stop
