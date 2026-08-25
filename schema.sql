@@ -73,3 +73,13 @@ CREATE TABLE IF NOT EXISTS conflicts (
     status        TEXT DEFAULT 'open',
     created_at    TEXT
 );
+
+-- Phase 2 SP2 新增：认证用户表
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    username      TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,           -- argon2 hash
+    role          TEXT NOT NULL DEFAULT 'user',   -- admin / reviewer / user
+    display_name  TEXT,
+    created_at    TEXT NOT NULL DEFAULT now()
+);

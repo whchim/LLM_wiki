@@ -64,6 +64,26 @@ def ensure_schema() -> None:
     with get_conn() as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         conn.execute(ddl)
+    _ensure_admin()
+
+
+def _ensure_admin() -> None:
+    """users 表为空时创建初始管理员（clone 即用）。
+
+    凭据来自环境变量 ADMIN_INIT_USER / ADMIN_INIT_PASS（默认 admin/admin123），
+    密码以 argon2 哈希落库。pwdlib 局部 import——数据层不为此引入顶层依赖。"""
+    import pwdlib
+    password_hash = pwdlib.PasswordHash.recommended()
+
+    user = os.environ.get("ADMIN_INIT_USER", "admin")
+    password = os.environ.get("ADMIN_INIT_PASS", "admin123")
+    with get_conn() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if n > 0:
+            return
+        conn.execute(
+            "INSERT INTO users (username, password_hash, role, display_name) VALUES (%s,%s,'admin',%s)",
+            (user, password_hash.hash(password), "系统管理员"))
 
 
 @contextmanager

@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: llmwiki
       POSTGRES_PASSWORD: llmwiki
     ports:
-      - "5432:5432"           # 本机开发/测试直连（DOCKER DAEMON 持有）
+      - "5432:5432"           # 本机开发/测试直连
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -14,12 +14,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-  streamlit:
+
+  api:
     build: .
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "8501:8501"
+      - "8000:8000"           # FastAPI REST API
     volumes:
-      - ./vault:/app/vault        # Obsidian Vault（存放知识 Markdown 与 _triggers/；meta.db 已退役）
+      - ./vault:/app/vault    # 共享 vault 卷（与 streamlit 同一挂载，路径一致）
     depends_on:
       db:
         condition: service_healthy
@@ -30,6 +32,37 @@ services:
       - DB_NAME=llmwiki
       - DB_USER=llmwiki
       - DB_PASS=llmwiki
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-please-32bytes}
+      - ADMIN_INIT_USER=${ADMIN_INIT_USER:-admin}
+      - ADMIN_INIT_PASS=${ADMIN_INIT_PASS:-admin123}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+
+  streamlit:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./vault:/app/vault    # Obsidian Vault（知识 Markdown 与 _triggers/）
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      - KB_ROOT=/app/vault
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=llmwiki
+      - DB_USER=llmwiki
+      - DB_PASS=llmwiki
+      - API_BASE=http://api:8000
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-please-32bytes}
+    restart: unless-stopped
+
 volumes:
   pgdata:
