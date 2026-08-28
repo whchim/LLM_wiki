@@ -1,0 +1,20 @@
+[2026-08-28 11:31:23] watcher 启动：interval=5s timeout=900s triggers=D:\桌面\LLM_wiki\vault\_triggers
+[2026-08-28 11:31:23] 发现 1 个待处理纸条：['compile_20260828_023814011429.md']
+[2026-08-28 11:31:25] 唤起 Claude Code headless 消费（1 个纸条）...
+[2026-08-28 11:31:25] claude 失败（exit=127，0s）：未找到 claude 命令——请确认本机已安装 Claude Code 且在 PATH 中
+[2026-08-28 11:34:20] watcher 启动：interval=5s timeout=900s triggers=D:\桌面\LLM_wiki\vault\_triggers
+[2026-08-28 11:34:20] 发现 1 个待处理纸条：['compile_20260828_023814011429.md']
+[2026-08-28 11:34:22] 唤起 Claude Code headless 消费（1 个纸条）...
+[2026-08-28 11:37:27] claude 失败（exit=1，184s）：API Error: Connection refused — a firewall or proxy may be blocking it (ConnectionRefused)
+[2026-08-28 11:40:40] watcher 启动：interval=5s timeout=900s triggers=D:\桌面\LLM_wiki\vault\_triggers
+[2026-08-28 11:40:40] 发现 1 个待处理纸条：['compile_20260828_023814011429.md']
+[2026-08-28 11:40:42] 唤起 Claude Code headless 消费（1 个纸条）...
+[2026-08-28 13:44:30] watcher 启动：interval=5s timeout=900s triggers=D:\桌面\LLM_wiki\vault\_triggers
+[2026-08-28 13:44:30] 发现 1 个待处理纸条：['compile_20260828_023814011429.md']
+[2026-08-28 13:44:32] 唤起 Claude Code headless 消费（1 个纸条）...
+[2026-08-28 13:50:22] claude 完成（exit=0，349s）。输出尾部：- `trace_events` 已落 1 条 `compile_session`：`trace_id=b76256ec-542a-41b3-9f7e-9803327dc1b9`，compiled=3 / cached=0 / failed=0，latency=88154ms |  | **下一步**：`vault/_triggers/review_20260828_134727.md` 已生成（含 2 个概念页路径），下次 `/process-triggers` 将执行六维度审核。
+[2026-08-28 13:50:22] 仍有 1 个纸条未清空（可能新增），下轮继续
+[2026-08-28 13:50:27] 发现 1 个待处理纸条：['review_20260828_134727.md']
+[2026-08-28 13:50:29] 唤起 Claude Code headless 消费（1 个纸条）...
+[2026-08-28 13:59:04] claude 完成（exit=0，515s）。输出尾部：**落库**：`pending_reviews` INSERT 2 行（id=26、27，submitter=demo_user，department=共享层），`ai_scores` 为完整六维度 JSON。 |  | **可观测性**：本批次为 review 无 compile 批次，按规范不采集 compile_session trace（符合输出验收）。
+[2026-08-28 13:59:09] 无待处理纸条，退出（--once）

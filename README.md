@@ -97,7 +97,17 @@ streamlit run streamlit_app/app.py
 
 > clone 后知识索引初始为空。沿下方"核心闭环"走一遍上传→编译→审核流程，知识库即开始增长；索引当前规模见"真实数据验收"节。
 
-**LLM 引擎**：在项目根目录运行 Claude Code，键入 `/process-triggers` 处理上传队列、`/ask <问题>` 检索问答。
+**LLM 引擎**：两种运行方式——
+
+```bash
+# 方式 1（推荐）：触发文件 Watcher 常驻后台，上传后全自动编译（零人工）
+tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机自启
+# 原理：轮询 vault/_triggers/，发现纸条自动唤起 `claude -p "/process-triggers"`（headless）
+
+# 方式 2（手动）：在项目根目录运行 Claude Code，键入 /process-triggers 处理队列
+```
+
+> Watcher 需要本机已安装 Claude Code（编译必须由 LLM 引擎执行，这是架构原则）；日志见 `tools/watcher.log`。**运行前置**：Claude Code 的 LLM 通道必须可用（如 `ANTHROPIC_BASE_URL` 指向本地代理服务，需保证该服务已启动——watcher 内置预检，通道不通会在唤起前明确报错而不是白跑几分钟）。安全说明：headless 无人值守默认 `--permission-mode bypassPermissions`，个人机可接受；对外部署建议改为 `--allowedTools` 白名单（见 `tools/trigger_watcher.py` 头注）。
 
 > 跑测试：`docker compose up -d db` 后 `python -m pytest tests -q`（无 PG 时设 `PYTEST_SKIP_NO_DB=1` 跳过）
 
