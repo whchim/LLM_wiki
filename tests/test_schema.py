@@ -33,4 +33,4 @@ def test_schema_is_idempotent(tmp_path):
         conn.execute(ddl)
         tables = _tables(conn)
     assert tables == {"knowledge_entries", "compile_tasks", "pending_reviews", "search_logs",
-                      "audit_logs", "contributors", "conflicts", "users"}
+                      "audit_logs", "contributors", "conflicts", "users", "trace_events"}

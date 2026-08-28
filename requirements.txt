@@ -7,3 +7,5 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 PyJWT>=2.8
 pwdlib[argon2]>=0.2
+# 可选依赖：LLM 层可观测性探针（SP2.5）——未配置 LANGFUSE_* 环境变量时无需安装
+# langfuse>=2.10

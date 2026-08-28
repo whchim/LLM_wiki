@@ -55,13 +55,13 @@ with st.sidebar:
     st.divider()
 
     # 导航（按角色收敛可见页面）
-    pages = ["上传文档", "自增长看板"]
+    pages = ["上传文档", "自增长看板", "可观测性"]
     if auth["role"] in ("admin", "reviewer"):
         pages.insert(1, "审核管理")
     page = st.radio("导航", pages)
 
 # ---- 路由 ----
-import upload, review, growth
+import upload, review, growth, obs
 if page == "上传文档":
     if auth["role"] in ("admin", "reviewer", "user"):
         upload.render()
@@ -72,5 +72,7 @@ elif page == "审核管理":
         review.render()
     else:
         st.warning("审核操作仅管理员/审核者可用。")
+elif page == "可观测性":
+    obs.render()
 else:
     growth.render()

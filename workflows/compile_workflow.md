@@ -23,6 +23,27 @@
 2. 全部完成后写 `_triggers/review_<ts>.md`（本批所有概念页路径），供审核阶段消费
 3. 返回：编译 N 个、缓存 M 个、失败 K 个
 
+## 可观测性（SP2.5）：采集本次编译结果
+
+编译会话结束时（步骤 2 之后、返回之前），**汇总本批结果并交给采集**：
+
+- 统计：`compiled`（LLM 编译成功页数）、`cached`（指纹缓存命中数）、`failed`（失败数）、
+  `files`（本批产出文件路径 JSON 数组）、`latency_ms`（本次编译会话耗时）
+- 方式：把上述计数与清单写入一个临时 JSON 文件 `vault/_triggers/.compile_trace_<ts>.json`，
+  **/process-triggers 命令的兜底采集会读取/使用它**（若命令侧未自动执行，可手动调用：
+
+  ```
+  python tools/record_compile_trace.py --trace-id <uuid> --compiled N --cached M \
+      --failed K --files '<json>' --latency-ms <ms>
+  ```
+
+- 产出 JSON 格式：
+  ```json
+  {"trace_id": "<uuid>", "compiled": 5, "cached": 3, "failed": 0,
+   "files": ["NEXUS/资源/a.md", "pending_review/概念b.md"], "latency_ms": 12000}
+  ```
+
 ## 输出验收
 - 每个成功文件：NEXUS/资源/ 有 1 个资源摘要；概念页在 pending_review/，YAML 四必填字段齐全
 - 触发文件处理完毕移入 vault/_triggers/done/
+- 编译结果已采集（compile_session trace 落库）

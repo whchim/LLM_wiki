@@ -6,10 +6,10 @@ Demo 期用系统 grep（Windows 无此命令，仅 Git Bash 可用）；SP2 改
 """
 import os
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 import db
-from api import auth
+from api import auth, trace as trace_mod
 
 router = APIRouter(tags=["search"])
 
@@ -33,20 +33,23 @@ def _grep(query: str) -> list[str]:
             try:
                 with open(full, encoding="utf-8") as f:
                     if query in f.read():
-                        hits.append(os.path.relpath(full, KB_ROOT).replace(os.sep, "/"))
+                        hits.append(os.path.relpath(full, _kb_root()).replace(os.sep, "/"))
             except (OSError, UnicodeDecodeError):
                 continue
     return hits
 
 
 @router.get("/search")
-def search(query: str,
-           user: auth.User = Depends(auth.get_current_user)) -> dict:
-    """搜索知识库（grep 语义），记录 search_logs。"""
+def search(query: str, request: Request,
+           user: auth.User = Depends(trace_mod.trace("search"))) -> dict:
+    """搜索知识库（grep 语义），记录 search_logs + trace（hit_count）。"""
     if not query.strip():
+        request.state.trace_detail = {"operation": "search", "query": query, "hit_count": 0}
         return {"query": query, "matches": 0, "files": []}
     files = _grep(query.strip())
     db.insert_search_log(query.strip(), len(files), "api")
+    request.state.trace_detail = {
+        "operation": "search", "query": query.strip(), "hit_count": len(files)}
     return {"query": query, "matches": len(files), "files": files[:50]}
 
 

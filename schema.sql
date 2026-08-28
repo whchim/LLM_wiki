@@ -83,3 +83,20 @@ CREATE TABLE IF NOT EXISTS users (
     display_name  TEXT,
     created_at    TEXT NOT NULL DEFAULT now()
 );
+
+-- Phase 2 SP2.5 新增：可观测性 Trace 事件表
+CREATE TABLE IF NOT EXISTS trace_events (
+    id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    span_type   TEXT NOT NULL,          -- compile_session / search / review_approve / review_reject /
+                                        -- review_resubmit / review_retry_ai / rebuild_index / login
+    trace_id    TEXT,                   -- 一次编译会话的 UUID（过程 trace 分组键；单操作可空）
+    operation   TEXT,                   -- 细分动作
+    status      TEXT NOT NULL,          -- ok / error（业务失败也记 error，便于看失败率）
+    latency_ms  INTEGER,                -- 会话/操作耗时（毫秒）
+    detail      JSONB,                  -- 附加：compiled/cached/failed、search hit、错误 message、目标路径
+    token_usage JSONB,                  -- Langfuse 探针回填（input/output/成本）；过程 trace 可空
+    operator    TEXT,                   -- 触发者（compile_trace 记 system 或触发用户）
+    created_at  TEXT NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_trace_span_created ON trace_events (span_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_trace_traceid ON trace_events (trace_id);
