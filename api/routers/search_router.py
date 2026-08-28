@@ -1,9 +1,10 @@
-"""搜索路由：全文搜索（grep 语义）+ 缺口统计 + 条目列表。
+"""搜索路由（SP4 混合检索）：grep 精确 + pgvector 向量语义 → 加权融合 re-rank。
 
-搜索命中/未命中写入 search_logs（自增长闭环输入）。
-Demo 期用系统 grep（Windows 无此命令，仅 Git Bash 可用）；SP2 改为纯 Python
-实现等价的"文件内容包含匹配"——跨平台且行为一致。
+降级铁律：embedding 服务故障（未配 key / 网络失败）自动退化为 grep-only，
+不崩、不阻塞——只失去模糊匹配能力，精确匹配行为与 Demo 完全一致。
 """
+import json
+import math
 import os
 
 from fastapi import APIRouter, Depends, Request
@@ -39,24 +40,84 @@ def _grep(query: str) -> list[str]:
     return hits
 
 
+def _vector_search(query: str, top_k: int = 20) -> list[dict] | None:
+    """pgvector 余弦 Top-K（status='active'）。失败/不可用返回 None（调用方降级）。"""
+    from api import embedding
+    if not embedding.is_available():
+        return None
+    try:
+        vec = embedding.embed_query(query)
+    except embedding.EmbeddingError:
+        return None
+    try:
+        with db.get_conn() as conn:
+            rows = conn.execute(
+                "SELECT path, title, 1 - (embedding <=> %s::vector) AS similarity "
+                "FROM knowledge_entries WHERE status='active' AND embedding IS NOT NULL "
+                "ORDER BY embedding <=> %s::vector LIMIT %s",
+                (json.dumps(vec), json.dumps(vec), top_k)).fetchall()
+        return [{"path": r[0], "title": r[1], "similarity": float(r[2])} for r in rows]
+    except Exception:
+        return None
+
+
+def _fuse(grep_hits: list[str], vec_hits: list[dict] | None,
+          w_grep: float = 0.5, w_vec: float = 0.3) -> list[dict]:
+    """加权分数融合：score = w_grep×grep贡献 + w_vec×similarity。
+
+    grep_hits 是无序文件路径（字面命中等权，除以 sqrt(n) 温和归一）；
+    vec_hits 带相似度直接加权。返回按 score 降序的统一条目列表。"""
+    scores: dict[str, dict] = {}
+
+    def _add(path: str, channel: str, pts: float):
+        entry = scores.setdefault(path, {"path": path, "score": 0.0,
+                                         "channels": {"grep": 0, "vector": 0}})
+        entry["score"] += pts
+        entry["channels"][channel] = 1
+
+    if grep_hits:
+        w = w_grep / math.sqrt(len(grep_hits))
+        for p in grep_hits:
+            _add(p, "grep", w)
+    if vec_hits:
+        for item in vec_hits:
+            _add(item["path"], "vector", w_vec * item["similarity"])
+
+    return sorted(scores.values(), key=lambda x: x["score"], reverse=True)
+
+
 @router.get("/search")
-def search(query: str, request: Request,
+def search(query: str, request: Request, mode: str = "auto",
            user: auth.User = Depends(trace_mod.trace("search"))) -> dict:
-    """搜索知识库（grep 语义），记录 search_logs + trace（hit_count）。"""
+    """混合检索（SP4）：grep 精确 + 向量语义（auto=融合；grep/vector=单通道）。
+
+    降级：embedding 不可用/失败 → 自动 grep-only。"""
     if not query.strip():
         request.state.trace_detail = {"operation": "search", "query": query, "hit_count": 0}
-        return {"query": query, "matches": 0, "files": []}
-    files = _grep(query.strip())
-    db.insert_search_log(query.strip(), len(files), "api")
+        return {"query": query, "matches": 0, "files": [], "channels": {"grep": 0, "vector": 0}}
+
+    q = query.strip()
+    grep_hits = _grep(q) if mode in ("auto", "grep") else []
+    vec_hits = _vector_search(q) if mode in ("auto", "vector") else None
+
+    fused = _fuse(grep_hits, vec_hits)
+    channels = {"grep": len(grep_hits),
+                "vector": len(vec_hits) if vec_hits is not None else 0}
+    files = [e["path"] for e in fused][:50]
+
+    db.insert_search_log(q, len(fused), "api")
     request.state.trace_detail = {
-        "operation": "search", "query": query.strip(), "hit_count": len(files)}
-    return {"query": query, "matches": len(files), "files": files[:50]}
+        "operation": "search", "query": q, "hit_count": len(fused),
+        "channels": channels, "mode": mode,
+    }
+    return {"query": q, "matches": len(fused), "files": files,
+            "channels": channels, "entries": fused[:20]}
 
 
 @router.get("/search/missed")
 def missed(limit: int = 20,
            user: auth.User = Depends(auth.get_current_user)) -> dict:
-    """搜索未命中 Top N（知识缺口）。"""
+    """搜索未命中 Top N（知识缺口）——混合检索后=双通道都零命中的查询。"""
     return {"items": db.top_missed_queries(limit)}
 
 

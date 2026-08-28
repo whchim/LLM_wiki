@@ -9,6 +9,10 @@ tests/_isolated/
 .pytest_tmp/
 _tmp_*/
 
+# 本地密钥（SP4：DASHSCOPE_API_KEY 等，绝不进仓库）
+.env
+tools/watcher.log
+
 # SQLite
 vault/meta.db
 vault/meta.db-*

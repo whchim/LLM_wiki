@@ -284,15 +284,17 @@ def rebuild_index() -> int:
                         continue
                     conn.execute(
                         "INSERT INTO knowledge_entries "
-                        "(path, type, title, department, status, version, fingerprint, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "(path, type, title, department, status, version, fingerprint, updated_at, description) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                         "ON CONFLICT (path) DO UPDATE SET "
                         "type=EXCLUDED.type, title=EXCLUDED.title, department=EXCLUDED.department, "
                         "status=EXCLUDED.status, version=EXCLUDED.version, "
-                        "fingerprint=EXCLUDED.fingerprint, updated_at=EXCLUDED.updated_at",
+                        "fingerprint=EXCLUDED.fingerprint, updated_at=EXCLUDED.updated_at, "
+                        "description=EXCLUDED.description",
                         (rel, meta.get("type", "concept"), meta.get("title", fn[:-3]),
                          meta.get("department"), meta.get("status", "active"),
                          meta.get("version", "V1.0"), meta.get("fingerprint"),
-                         meta.get("updated", meta.get("created"))))
+                         meta.get("updated", meta.get("created")),
+                         meta.get("description")))
                     count += 1
     return count

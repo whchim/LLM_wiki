@@ -101,6 +101,13 @@ CREATE TABLE IF NOT EXISTS trace_events (
 CREATE INDEX IF NOT EXISTS idx_trace_span_created ON trace_events (span_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_trace_traceid ON trace_events (trace_id);
 
+-- Phase 2 SP4 新增：向量检索（向量 = 可重建缓存；模型换版/损坏 → backfill 全量重算）
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS embedding vector(1024);
+CREATE INDEX IF NOT EXISTS idx_entries_embedding
+    ON knowledge_entries USING hnsw (embedding vector_cosine_ops);
+-- frontmatter 的 description（推荐字段）纳入缓存（SP4 embedding 输入用）
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS description TEXT;
+
 -- Phase 2 SP5 新增：健康巡检报告
 CREATE TABLE IF NOT EXISTS health_reports (
     id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

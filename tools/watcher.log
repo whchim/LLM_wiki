@@ -30,3 +30,5 @@
 [2026-08-28 14:48:58] [scan] 查询 compile_tasks 失败，本轮跳过 RAW 增量扫描：PG down
 [2026-08-28 14:52:21] [scan] RAW 增量 2 个文件 → 纸条 compile_20260828_145221217544.md
 [2026-08-28 14:52:21] [scan] 查询 compile_tasks 失败，本轮跳过 RAW 增量扫描：PG down
+[2026-08-28 15:22:35] [scan] RAW 增量 2 个文件 → 纸条 compile_20260828_152235505144.md
+[2026-08-28 15:22:36] [scan] 查询 compile_tasks 失败，本轮跳过 RAW 增量扫描：PG down
