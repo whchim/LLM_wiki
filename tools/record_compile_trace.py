@@ -34,6 +34,8 @@ def main() -> int:
     parser.add_argument("--operation", default="batch", help="细分动作，默认 batch")
     parser.add_argument("--compiled", type=int, default=0, help="LLM 编译成功页数")
     parser.add_argument("--cached", type=int, default=0, help="指纹缓存命中的文件数")
+    parser.add_argument("--skipped", type=int, default=0,
+                        help="断点续跑跳过的文件数（done/cached 已完成，SP3）")
     parser.add_argument("--failed", type=int, default=0, help="失败文件数")
     parser.add_argument("--files", default="[]", help='JSON 数组：本次产出的文件路径列表')
     parser.add_argument("--latency-ms", type=int, default=0, help="本次编译会话耗时（毫秒）")
@@ -51,6 +53,7 @@ def main() -> int:
     detail = {
         "compiled": args.compiled,
         "cached": args.cached,
+        "skipped": args.skipped,
         "failed": args.failed,
         "files": files[:100],
     }

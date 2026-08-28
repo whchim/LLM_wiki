@@ -18,3 +18,11 @@
 [2026-08-28 13:50:29] 唤起 Claude Code headless 消费（1 个纸条）...
 [2026-08-28 13:59:04] claude 完成（exit=0，515s）。输出尾部：**落库**：`pending_reviews` INSERT 2 行（id=26、27，submitter=demo_user，department=共享层），`ai_scores` 为完整六维度 JSON。 |  | **可观测性**：本批次为 review 无 compile 批次，按规范不采集 compile_session trace（符合输出验收）。
 [2026-08-28 13:59:09] 无待处理纸条，退出（--once）
+[2026-08-28 14:12:14] [scan] RAW 增量 2 个文件 → 纸条 compile_20260828_141214868036.md
+[2026-08-28 14:12:16] [scan] 查询 compile_tasks 失败，本轮跳过 RAW 增量扫描：PG down
+[2026-08-28 14:14:42] [scan] RAW 增量 2 个文件 → 纸条 compile_20260828_141441995258.md
+[2026-08-28 14:14:43] [scan] 查询 compile_tasks 失败，本轮跳过 RAW 增量扫描：PG down
+[2026-08-28 14:21:14] [scan] RAW 增量 2 个文件 → 纸条 compile_20260828_142114485215.md
+[2026-08-28 14:21:15] [scan] 查询 compile_tasks 失败，本轮跳过 RAW 增量扫描：PG down
+[2026-08-28 14:25:35] [scan] RAW 增量 2 个文件 → 纸条 compile_20260828_142535946657.md
+[2026-08-28 14:25:37] [scan] 查询 compile_tasks 失败，本轮跳过 RAW 增量扫描：PG down

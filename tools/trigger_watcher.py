@@ -33,12 +33,28 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TRIGGERS = ROOT / "vault" / "_triggers"
 LOG_FILE = ROOT / "tools" / "watcher.log"
+
+# 复用项目数据层（compile_tasks 查询/插入 + 触发文件写入）
+sys.path.insert(0, str(ROOT / "streamlit_app"))
 
 INTERVAL = int(os.environ.get("WATCHER_INTERVAL", "5"))
 TIMEOUT = int(os.environ.get("WATCHER_TIMEOUT", "900"))
 STABLE_SECS = 2          # 文件大小稳定判定窗口
+RAW_EXTS = {".md", ".txt"}   # SP3：RAW 直放监听的扩展名白名单
+
+
+def _kb_root() -> Path:
+    """知识库根：跟随 KB_ROOT（测试隔离/容器/本机一致）。"""
+    return Path(os.environ.get("KB_ROOT", str(ROOT / "vault")))
+
+
+def _triggers_dir() -> Path:
+    return _kb_root() / "_triggers"
+
+
+def _raw_dir() -> Path:
+    return _kb_root() / "RAW"
 
 
 def _claude_cmd() -> str:
@@ -66,11 +82,62 @@ def log(msg: str) -> None:
 
 def pending_triggers() -> list[Path]:
     """待处理纸条：_triggers/*.md（排除 done/ 子目录与 .tmp_ 原子写中转文件）。"""
-    if not TRIGGERS.exists():
+    if not _triggers_dir().exists():
         return []
     return sorted(
-        p for p in TRIGGERS.glob("*.md")
+        p for p in _triggers_dir().glob("*.md")
         if not p.name.startswith(".tmp_"))
+
+
+def _raw_relpaths() -> list[str]:
+    """RAW 下全部可编译文件（相对 KB_ROOT 的 POSIX 路径），按分类子目录组织。"""
+    raw = _raw_dir()
+    if not raw.exists():
+        return []
+    out: list[str] = []
+    for p in sorted(raw.rglob("*")):
+        if p.is_file() and p.suffix.lower() in RAW_EXTS:
+            out.append(p.relative_to(_kb_root()).as_posix())
+    return out
+
+
+def _kb_root() -> Path:
+    kb = os.environ.get("KB_ROOT", str(ROOT / "vault"))
+    return Path(kb)
+
+
+def scan_raw_increment() -> list[str]:
+    """SP3 增量判定：RAW 下"compile_tasks 中从未出现过的"文件（相对 KB_ROOT 路径）。
+
+    判定 = 路径在 compile_tasks 无任何记录即为新（seen 集合取全部状态）。
+    failed/pending/done/cached 均不算新——failed 重复生成纸条会形成风暴，
+    重试走 UI 按钮（重新写纸条）或指纹变化后由消费侧断点逻辑处理。
+    数据库不可达时返回空表并告警（watcher 仍继续消费既有纸条）。"""
+    try:
+        import db  # noqa: 复用连接池与环境变量
+    except Exception as e:
+        log(f"[scan] 数据层不可用，本轮跳过 RAW 增量扫描：{e}")
+        return []
+    try:
+        with db.get_conn() as conn:
+            rows = conn.execute("SELECT DISTINCT raw_path FROM compile_tasks")
+            seen = {r[0] for r in rows.fetchall()}
+        return [p for p in _raw_relpaths() if p not in seen]
+    except Exception as e:
+        log(f"[scan] 查询 compile_tasks 失败，本轮跳过 RAW 增量扫描：{e}")
+        return []
+
+
+def write_raw_paper(paths: list[str]) -> Path | None:
+    """把 RAW 增量文件合并写成一张 compile 纸条（复用 ops.write_trigger 原子写）。"""
+    try:
+        import ops
+        paper = ops.write_trigger("compile", paths, "watcher_scan")
+        log(f"[scan] RAW 增量 {len(paths)} 个文件 → 纸条 {paper.name}")
+        return paper
+    except Exception as e:
+        log(f"[scan] 写纸条失败：{e}")
+        return None
 
 
 def stable(p: Path) -> bool:
@@ -127,10 +194,22 @@ def main() -> int:
                         help="处理完当前存量纸条后退出（默认常驻轮询）")
     args = parser.parse_args()
 
-    log(f"watcher 启动：interval={INTERVAL}s timeout={TIMEOUT}s triggers={TRIGGERS}")
+    log(f"watcher 启动：interval={INTERVAL}s timeout={TIMEOUT}s triggers={_triggers_dir()}")
+
+    # SP3：RAW 增量扫描——常驻模式每轮在循环内扫（发现拖入 RAW 的新文件）；
+    # --once 模式在循环前扫一次，让存量 RAW 文件也能被处理。
+    if args.once:
+        new_files = scan_raw_increment()
+        if new_files:
+            write_raw_paper(new_files)
 
     while True:
         try:
+            if not args.once:
+                new_files = scan_raw_increment()
+                if new_files:
+                    write_raw_paper(new_files)
+
             papers = pending_triggers()
             if not papers:
                 if args.once:

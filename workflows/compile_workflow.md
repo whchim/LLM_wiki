@@ -6,11 +6,21 @@
 - 待编译 RAW 路径列表（来自触发文件）
 
 ## 步骤
-1. 对每个 RAW 路径：
-   a. 计算 SHA256：`sha256sum "vault/<raw_path>"`
-   b. 查缓存：`sqlite3 vault/meta.db "SELECT id FROM compile_tasks WHERE raw_path='<path>' AND fingerprint='<hash>' AND status='done' ORDER BY id DESC LIMIT 1"`
-      - 命中 → 更新该任务记录为 cached（`INSERT` 新行 status='cached' 亦可），跳过 LLM
-   c. 未命中：
+1. **断点续跑去重（SP3，先于一切编译动作）**：对纸条内每个 RAW 路径，查
+   PostgreSQL（`psql "$DB_DSN"` 或 python psycopg；连接参数同环境变量 DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASS）：
+   ```sql
+   SELECT status, fingerprint, started_at FROM compile_tasks
+   WHERE raw_path='<path>' ORDER BY id DESC LIMIT 1;
+   ```
+   - `done` 且指纹与当前文件 SHA256 相同 → **跳过**（输出"已编译，跳过"，计入 skipped）
+   - `cached` → 跳过（计入 cached）
+   - `processing` 且 started_at 距今 < 30 分钟 → 跳过（另一会话可能在跑）
+   - 无记录 / `failed` / `pending` / `processing` 超时（僵尸） / `done` 但指纹已变 → 进入编译
+2. 对每个待编译路径：
+   a. 计算 SHA256：`python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "vault/<raw_path>"`
+      （或 `sha256sum`；Windows 用 Python 方式）
+   b. 置状态：`UPDATE compile_tasks SET status='processing', started_at=now() WHERE id=<该路径最新任务id>`
+   c. 未命中缓存：
       - 非 .md/.txt：用 Python 提取文本（pypdf / python-docx，本机无 Python 时报错并标记 failed）
       - 读全文 → 执行 prompts/compile_prompt.md → 解析 JSON（失败自动重试 1 次）
       - 按设计文档 5.3/5.4 落盘：
@@ -18,10 +28,10 @@
           （资源摘要免审直接 active 入库（设计文档 4.4），概念页才进审核）
         - 概念页 → `pending_review/<概念名>.md`（YAML: type=concept, status=pending, source）
       - 更新 index.md（资源节，幂等追加；同时维护头部统计行 `> 资源 N 篇 · 概念 M 个 · 最后更新 YYYY-MM-DD`，见设计文档 5.5）
-      - `sqlite3` upsert knowledge_entries（资源 active + 概念 pending）
-      - 更新 compile_tasks 状态 done/failed（error_msg 记录失败原因）
-2. 全部完成后写 `_triggers/review_<ts>.md`（本批所有概念页路径），供审核阶段消费
-3. 返回：编译 N 个、缓存 M 个、失败 K 个
+      - upsert knowledge_entries（资源 active + 概念 pending；PostgreSQL，经 db.py 或等价 SQL）
+      - 更新 compile_tasks 状态 done/failed/cached（error_msg 记录失败原因）
+3. 全部完成后写 `_triggers/review_<ts>.md`（本批所有概念页路径），供审核阶段消费
+4. 返回：编译 N 个、缓存 M 个、跳过 S 个、失败 K 个
 
 ## 可观测性（SP2.5）：采集本次编译结果
 
