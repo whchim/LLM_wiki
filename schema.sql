@@ -100,3 +100,16 @@ CREATE TABLE IF NOT EXISTS trace_events (
 );
 CREATE INDEX IF NOT EXISTS idx_trace_span_created ON trace_events (span_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_trace_traceid ON trace_events (trace_id);
+
+-- Phase 2 SP5 新增：健康巡检报告
+CREATE TABLE IF NOT EXISTS health_reports (
+    id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    report_date       TEXT NOT NULL,
+    orphan_count      INTEGER NOT NULL DEFAULT 0,   -- 孤立节点数
+    broken_link_count INTEGER NOT NULL DEFAULT 0,   -- wikilink 断链数
+    stale_count       INTEGER NOT NULL DEFAULT 0,   -- 过期（>180 天）数
+    conflict_count    INTEGER NOT NULL DEFAULT 0,   -- 相似候选对数
+    total_entries     INTEGER NOT NULL DEFAULT 0,
+    growth_rate       REAL,                          -- 相比上次巡检增长率
+    detail            JSONB                          -- 明细清单（路径/配对）
+);

@@ -40,3 +40,11 @@ def render() -> None:
         st.markdown(Path(reports[0]).read_text(encoding="utf-8"))
     else:
         st.info("尚无周报。Claude Code 执行 /process-growth 命令后生成（见 workflows/growth_workflow.md）。")
+
+    st.divider()
+    st.subheader("最近健康周报（SP5）")
+    health = sorted(glob.glob(str(Path(KB_ROOT) / "NEXUS" / "研究" / "健康周报_*.md")), reverse=True)
+    if health:
+        st.markdown(Path(health[0]).read_text(encoding="utf-8"))
+    else:
+        st.info("尚无健康周报。Claude Code 执行 /health-check 命令后生成（见 workflows/health_workflow.md）。")
