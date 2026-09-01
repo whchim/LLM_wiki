@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "LLM Wiki 企业知识库平台 · 运行时架构",
+    "output": "docs/diagrams/llm-wiki-runtime.html",
+    "quality_profile": "standard",
+    "repository": {
+      "url": "https://github.com/whchim/LLM_wiki",
+      "revision": "24ea3003fda5d3f4feee40d1bfa510b18b478fbe"
+    }
+  },
+  "layout": {
+    "mode": "grid",
+    "cols": 4,
+    "gapX": 46,
+    "gapY": 46,
+    "cellW": 148,
+    "cellH": 62
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "用户", "sublabel": "浏览器", "row": 1, "col": 0 },
+    { "id": "streamlit", "type": "frontend", "label": "Streamlit", "sublabel": "管理台 :8501", "row": 1, "col": 1, "sources": [{ "path": "streamlit_app/app.py", "line": 1 }] },
+    { "id": "api", "type": "backend", "label": "FastAPI", "sublabel": "REST :8000 · JWT · 审计", "row": 1, "col": 2, "sources": [{ "path": "api/main.py", "line": 1 }] },
+    { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": "16 + pgvector :5432", "row": 1, "col": 3, "sources": [{ "path": "schema.sql", "line": 1 }] },
+    { "id": "vault", "type": "database", "label": "vault/", "sublabel": "Markdown + YAML 权威源", "row": 3, "col": 1 },
+    { "id": "triggers", "type": "messagebus", "label": "_triggers/", "sublabel": "触发文件消息队列", "row": 3, "col": 2, "sources": [{ "path": "tools/trigger_watcher.py", "line": 1 }] },
+    { "id": "claude", "type": "external", "label": "Claude Code", "sublabel": "编译/审核/问答 Agent", "row": 3, "col": 3 }
+  ],
+  "boundaries": [
+    { "kind": "security-group", "label": "Docker Compose · 内部服务", "wraps": ["streamlit", "api", "db"] },
+    { "kind": "region", "label": "外部交互方", "wraps": ["user", "claude"] }
+  ],
+  "connections": [
+    { "from": "user", "to": "streamlit", "label": "HTTPS", "variant": "emphasis" },
+    { "from": "streamlit", "to": "api", "label": "REST · JWT Bearer", "variant": "emphasis", "labelDy": 54 },
+    { "from": "api", "to": "db", "label": "psycopg3 · 连接池", "variant": "emphasis", "labelDy": 54 },
+    { "from": "api", "to": "triggers", "label": "原子写纸条", "variant": "emphasis", "labelDy": 24 },
+    { "from": "triggers", "to": "claude", "label": "消费 · headless", "variant": "emphasis", "labelDy": 54 }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "主链路", "items": ["用户上传 → Streamlit → FastAPI → PG 落任务 + 原子写纸条", "watcher 发现纸条 → headless 唤起 Claude Code 编译", "产物写回 vault/，任务置 done，审核纸条自动生成"] },
+    { "dot": "rose", "title": "信任边界", "items": ["唯一对外入口：浏览器 HTTPS 到 Streamlit/FastAPI", "Obsidian 与 Claude Code 同为外部文件系统消费者（Obsidian 直读 vault）", "JWT 三角色鉴权，写操作统一走 API 并落审计日志"] },
+    { "dot": "emerald", "title": "数据一致性", "items": ["YAML 为权威源，PG 为可重建缓存（rebuild_index）", "向量 embedding = 可重建缓存（backfill 全量重算）", "纸条原子写（tmp+mv），失败补偿置 failed 不悬挂"] }
+  ]
+}

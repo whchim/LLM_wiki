@@ -46,6 +46,8 @@
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+（📐 **交互式架构图**（Archify 生成，可缩放/主题切换/导出）：[llm-wiki-runtime.html](docs/diagrams/llm-wiki-runtime.html) ｜ 源规范 [llm-wiki-runtime.candidate.json](docs/diagrams/llm-wiki-runtime.candidate.json)）
+
 （PlantUML 源图：[architecture.puml](docs/diagrams/architecture.puml)，知识流转闭环：[flow.puml](docs/diagrams/flow.puml)）
 
 **三个关键设计决策**：
