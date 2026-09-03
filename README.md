@@ -3,9 +3,9 @@
 > **个人沉淀 → 审核流转 → 企业共享** — 基于 LLM Wiki 编译范式 + Google OKF 规范的企业知识流转系统。
 > 入库时把原始文档编译为结构化 Markdown，替代传统 RAG"每次查询重新检索"。
 
-[![tests](https://img.shields.io/badge/tests-66%20passed-green)]()
-[![status](https://img.shields.io/badge/status-Phase%202%20(SP1%2FSP2%20done)-brightgreen)]()
-[![phase](https://img.shields.io/badge/phase-SP1%20%E6%95%B0%E6%8D%AE%E5%9C%B0%E5%9F%BA%20%2F%20SP2%20API%E4%B8%8E%E5%AE%89%E5%85%A8-blue)]()
+[![tests](https://img.shields.io/badge/tests-133%20passed-green)]()
+[![status](https://img.shields.io/badge/status-Phase%202%20%E4%B8%BB%E4%BD%93%E5%AE%8C%E6%88%90-brightgreen)]()
+[![phase](https://img.shields.io/badge/phase-SP1%7ESP5%20%E5%B7%B2%E4%BA%A4%E4%BB%98-blue)]()
 
 ---
 
@@ -150,10 +150,12 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 | [`docs/LLM_wiki_Phase2_路线图.md`](docs/LLM_wiki_Phase2_路线图.md) | Phase 2 主规划：SP1-SP5 拆分 / 排期 / 架构决策 / 退出标准 |
 | [`docs/LLM_wiki_Phase2_SP1_设计文档.md`](docs/LLM_wiki_Phase2_SP1_设计文档.md) | SP1 数据地基：PostgreSQL 迁移 + pgvector（已交付）|
 | [`docs/LLM_wiki_Phase2_SP2_设计文档.md`](docs/LLM_wiki_Phase2_SP2_设计文档.md) | SP2 API 与安全：FastAPI + JWT + 审计（已交付）|
+| [`docs/检索评测_黄金集.md`](docs/检索评测_黄金集.md) | 检索离线评测集（14 条）——**本地面试资产，不进公开仓库** |
 
 - **发现并修正 3 处 PRD 内部不一致**（架构层数、MCP Server 取舍、编译触发机制）
 - **开发范式收敛**：SDD（编译产物/检索，输入输出可形式化）+ TDD（审核确定性规则/数据层/API）；LLM 输出非确定部分明确不做 BDD
-- **66 个 pytest 用例**：DDL 幂等、双写一致性、审核规则边界（中文紧邻漏报/金额阈值）、上传批处理补偿、驳回重提流程、索引重建鲁棒性、JWT 鉴权与越权、审计落库、搜索缺口聚合、启动自愈
+- **133 个 pytest 用例**：DDL 幂等、双写一致性、审核规则边界（中文紧邻漏报/金额阈值）、上传批处理补偿、驳回重提流程、索引重建鲁棒性、JWT 鉴权与越权、审计落库、搜索缺口聚合、启动自愈、pgvector 混合检索与降级、缺口判据、LLM 输出契约校验
+- **CI（GitHub Actions）**：真实 PG 全量测试 + Prompt 退化检测；检索回归门禁（黄金集）仅本地执行
 
 ---
 
@@ -170,11 +172,11 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 ├── docs/                 # 文档体系（PRD/设计/实施/Phase2 规划 + diagrams）
 ├── workflows/            # 3 个 Agent 编排（compile/review/growth）
 ├── prompts/              # 3 个 Agent 系统提示词
-├── tools/                # 一次性数据迁移脚本（migrate_to_pg.py）
+├── tools/                # 迁移/评测/标定/退化检测/输出校验 CLI（migrate_to_pg/eval_search/tune_search/prompt_regression/validate_llm_output）
 ├── .claude/              # hook + /process-triggers、/ask 命令 + skills/
 ├── schema.sql            # PostgreSQL DDL（幂等：7 业务表 + pgvector + users）
 ├── init.sh               # 幂等初始化（目录树 + 建表 + SCHEMA.md）
-└── tests/                # 66 个 pytest 用例（连真实 PostgreSQL 隔离库）
+└── tests/                # 133 个 pytest 用例（连真实 PostgreSQL 隔离库）
 ```
 
 ---
@@ -185,9 +187,11 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 |--------|------|------|
 | **SP1 数据地基** | SQLite → PostgreSQL 16 + pgvector，7 表 + users，迁移脚本 | ✅ 已交付（`886b2f6`） |
 | **SP2 API 与安全** | FastAPI REST + JWT 认证 + 审计日志，Streamlit 接入 | ✅ 已交付（`d174fa1`/`2cd5881`） |
-| SP3 增量编译 | file watcher 监听 RAW 变更 + compile_tasks 断点续跑 | ⏳ 待开发 |
-| SP4 混合检索 | grep 精确 + pgvector 向量双通道 + 权重 re-rank（P99 < 3s @ 1 万条） | ⏳ 待开发 |
-| SP5 知识智能 | 健康巡检 + 周报、知识演进（版本自增）、关联涌现、缺口判据重定义 | ⏳ 待开发 |
+| **SP2.5 可观测性** | 编译过程 Trace + 端点埋点 + 看板页 | ✅ 已交付（`a1b71f5`） |
+| **SP3 增量编译** | 触发 watcher 全自动编译 + compile_tasks 断点续跑 | ✅ 已交付（`4ba4304`/`bbcfae7`） |
+| **SP4 混合检索** | grep + pgvector 双通道加权融合 + 评测集/缺口阈值判据 | ✅ 已交付（`6269f1b`/`2571072`） |
+| **SP5 知识智能** | 健康巡检 + 周报 + done 归档 | ✅ 已交付（`331189a`） |
+| 工程收尾 | CI（测试 + prompt 退化检测）、LLM 输出契约校验（门禁进 loop）、检索评测黄金集 | ✅ 已交付（`8b20649`/`b97c2ce` 等） |
 
 - **Phase 3 规划**：知识图谱（实体/关系抽取）、多租户 RBAC、外部源感知、分布式编译、生产级部署（详见 PRD）
 
