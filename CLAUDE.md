@@ -45,7 +45,7 @@ Streamlit（管理台，JWT 登录） ←HTTP→ api/（FastAPI）→ PostgreSQL
 - **概念页审核流**：编译产物先入 `pending_review/`（status=pending）→ AI 六维度审核（确定性两维正则+代码、模糊四维 LLM）→ 人工在管理台通过/驳回 → 通过后移入 `NEXUS/概念/`（status=active）；资源摘要不过审直接发布
 - **混合检索（SP4）**：`/search` 双通道 grep+pgvector → 加权融合（0.5/0.3，后续以评测为准）；embedding 故障自动降级 grep-only。**改检索逻辑后必跑 `tools/eval_search.py`（黄金集 14 条：MRR@10/Recall@10/缺口检出力）**
 - **SHA256 指纹缓存**：同指纹的 done 记录存在则跳过 LLM 调用，标记 cached
-- **LLM 输出契约校验**：prompts 里的 JSON 契约代码化（`streamlit_app/output_schema.py` 三组校验：审核六维度/编译产物/落盘 frontmatter，含判定一致性；详见 `docs/LLM_输出校验_设计说明.md`）。引擎自检用 `tools/validate_llm_output.py`（review|compile|frontmatter，退出码门禁，utf-8-sig 容错 BOM）；`/reviews` 响应含 `ai_scores_valid` 标记
+- **LLM 输出契约校验**：prompts 里的 JSON 契约代码化（`streamlit_app/output_schema.py` 三组校验：审核六维度/编译产物/落盘 frontmatter，含判定一致性；详见 `docs/LLM_输出校验_设计说明.md`）。质量门禁已进 agent loop：review 写库前 / compile 落盘前先自检（`tools/validate_llm_output.py`，违例重试 1 次、再败不落地）；`/reviews` 响应含 `ai_scores_valid` 标记。**Prompt 退化检测**：`tools/prompt_regression.py`（契约短语存在性 + golden 样例回归，已在 CI）
 - **自增长**：搜索缺口写入 search_logs（判据 SP4 v0.1.2 已落地：grep 零命中 且 向量最高相似度 < τ=0.52，τ 由黄金集标定；向量不可用自动退化为 grep 零命中）→ 看板展示缺口 Top 20 → 驱动补文档
 
 ## 开发范式（PRD 第八章）

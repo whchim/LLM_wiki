@@ -19,7 +19,9 @@
 | 位置 | 方式 | 失败语义 |
 |------|------|---------|
 | **审核读侧（已接入）** | `api/routers/review_router.py` `_to_out()`：`/reviews/pending|rejected` 响应新增 `ai_scores_valid` / `ai_scores_errors` | 非阻断：审核页可直观看到"AI 输出契约违例"（可观测，不破坏现有流程） |
-| **引擎自检（已提供 CLI）** | `tools/validate_llm_output.py`：`review <json>` / `compile <json>` / `frontmatter <md>`，支持 stdin（`-`） | 退出码 0/1/2；引擎（Claude Code）编译/审核后自检，失败重试或标记 failed |
+| **引擎自检 CLI（已提供）** | `tools/validate_llm_output.py`：`review <json>` / `compile <json>` / `frontmatter <md>`，支持 stdin（`-`） | 退出码 0/1/2；引擎（Claude Code）编译/审核后自检，失败重试或标记 failed |
+| **质量门禁进 loop（v0.2 已接入）** | `workflows/review_workflow.md` 步骤 d2（写库前校验，违例重试 1 次、再失败不写库）；`workflows/compile_workflow.md` 步骤 2c（落盘前校验，违例重试 1 次、再失败标记 failed 不落盘）+ 输出验收节 | 不合法产物不落地：不写入 pending_reviews / 不落盘 NEXUS |
+| **Prompt 退化检测（v0.2 已接入）** | `tools/prompt_regression.py`：契约短语存在性（3 prompt）× golden 样例回归（4 cases 与 output_schema 互相锁定）；已进 CI | 退出码门禁；prompt 编辑删改硬性契约条款即 fail |
 | **写侧（预留）** | 若未来 Python 直接写 ai_scores / 编译产物落盘，写入前先调对应 validator | 拒绝写入 + 错误明细 |
 
 不侵入既有写路径：`db.insert_review` 等被测试以 `"{}"` 脚手架调用，校验塞入会破坏既有语义——故采用读侧标记 + CLI 自检的增量方案。
@@ -50,4 +52,5 @@ python tools/validate_llm_output.py frontmatter <entry.md>
 
 ## Changelog
 
+- **v0.2（2026-09-03）**：质量门禁进 agent loop——`workflows/review_workflow.md` 步骤 d2 写入前契约校验（违例重试 1 次、再败不写库）、`workflows/compile_workflow.md` 步骤 2c 落盘前校验 + 输出验收节；新增 `tools/prompt_regression.py`（契约短语存在性 × golden 样例回归，零 LLM/零 DB，已进 CI）；4 个 golden 样例 cases（valid/invalid × review/compile）。
 - **v0.1（2026-09-01）**：初稿。新增 streamlit_app/output_schema.py（三组校验）、tools/validate_llm_output.py（CLI 自检门禁，utf-8-sig 容错 BOM）、/reviews 响应 ai_scores_valid 标记（ReviewOut + _to_out）、tests/test_output_schema.py（23 用例）。不侵入既有写路径。
