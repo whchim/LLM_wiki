@@ -21,10 +21,17 @@
       - LLM 子 Agent（每维度一个，按 prompts/review_prompt.md 对应节）：
         - 维度2 去重（对候选列表）· 维度3 职务归属 · 维度4 质量（1-5分）· 维度6 合规
    d. 按 review_prompt.md 判定逻辑链汇总 verdict（sensitive=blocked 一票否决等）
-   e. 写入审核结果：若该 nexus_path 已有 human_decision IS NULL 的行则 UPDATE 该行（按 id 更新 ai_verdict/ai_scores），否则 INSERT。调用 `streamlit_app/db.py` 的 `insert_review(nexus_path, 'demo_user', department, ai_verdict, ai_scores)` 函数签名（python -c 内联，如 `import sys; sys.path.insert(0, 'streamlit_app'); from db import insert_review; insert_review(...)`），不手写字段列表
+   d2. **输出契约校验（质量门禁进 loop）**：把 ai_scores JSON 交给
+       `python tools/validate_llm_output.py review -`（stdin 传入）自检（等价于
+       output_schema.validate_review_output：枚举/类型/判定一致性）：
+       - 合法（exit 0）→ 继续
+       - 不合法（exit 1）→ 打印违例清单，**重试 1 次**（提示模型按违例修正后重出）
+       - 重试仍不合法 → **不写库**，该条目计入会话报告的 errors（可观测，人工介入）
+   e. 写入审核结果（仅契约校验通过后）：若该 nexus_path 已有 human_decision IS NULL 的行则 UPDATE 该行（按 id 更新 ai_verdict/ai_scores），否则 INSERT。调用 `streamlit_app/db.py` 的 `insert_review(nexus_path, 'demo_user', department, ai_verdict, ai_scores)` 函数签名（python -c 内联，如 `import sys; sys.path.insert(0, 'streamlit_app'); from db import insert_review; insert_review(...)`），不手写字段列表
 2. 触发文件处理完毕移入 vault/_triggers/done/
 3. 返回：审核 N 条、判定分布
 
 ## 输出验收
 - pending_reviews 每条目一行，ai_scores 为完整 JSON（verdict/department/scores/duplicates/concerns/summary）
+- **每条 ai_scores 均通过契约校验**（/reviews 响应 ai_scores_valid=true 可复核；违例条目不得入库）
 - 审核页可展示该判定

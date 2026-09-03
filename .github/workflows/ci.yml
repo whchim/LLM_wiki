@@ -61,3 +61,6 @@ jobs:
 
       - name: 检索回归门禁（黄金集 --check，grep 降级模式）
         run: python tools/eval_search.py --check
+
+      - name: Prompt 退化检测（契约短语 + golden 样例回归，零 LLM/零 DB）
+        run: python tools/prompt_regression.py

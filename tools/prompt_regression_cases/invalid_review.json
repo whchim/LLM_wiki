@@ -1,0 +1,14 @@
+{
+  "verdict": "approved",
+  "department": "产品",
+  "scores": {
+    "completeness": "pass",
+    "dedup": "pass",
+    "quality": 2,
+    "sensitive": "blocked",
+    "compliance": "pass"
+  },
+  "duplicates": [],
+  "concerns": [],
+  "summary": "存在需人工判定的问题"
+}

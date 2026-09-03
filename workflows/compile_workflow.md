@@ -23,6 +23,12 @@
    c. 未命中缓存：
       - 非 .md/.txt：用 Python 提取文本（pypdf / python-docx，本机无 Python 时报错并标记 failed）
       - 读全文 → 执行 prompts/compile_prompt.md → 解析 JSON（失败自动重试 1 次）
+      - **输出契约校验（质量门禁进 loop）**：把编译 JSON 交给
+        `python tools/validate_llm_output.py compile -`（stdin）自检（等价于
+        output_schema.validate_compile_output：resource 必填/枚举、summary 章节、
+        concepts 标题唯一/四章节）：
+        - 合法 → 继续落盘
+        - 不合法 → 按违例清单重试 1 次；仍不合法 → 标记 failed + error_msg（不落盘）
       - 按设计文档 5.3/5.4 落盘：
         - 资源摘要 → `NEXUS/资源/<标题>.md`（YAML: type=resource, status=active, fingerprint, source=<raw_path>）
           （资源摘要免审直接 active 入库（设计文档 4.4），概念页才进审核）
@@ -55,5 +61,7 @@
 
 ## 输出验收
 - 每个成功文件：NEXUS/资源/ 有 1 个资源摘要；概念页在 pending_review/，YAML 四必填字段齐全
+- **每个成功文件均通过 compile 契约校验**；落盘 frontmatter 可用
+  `python tools/validate_llm_output.py frontmatter <file>` 复核（type/status/version/tags 命名空间）
 - 触发文件处理完毕移入 vault/_triggers/done/
 - 编译结果已采集（compile_session trace 落库）
