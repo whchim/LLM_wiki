@@ -1,0 +1,63 @@
+# LLM Wiki 持续集成：全量测试（真实 PostgreSQL）+ 检索回归门禁（黄金集）。
+#
+# 设计要点：
+# 1. 测试连真实 PostgreSQL（pgvector 镜像 service 容器），杜绝 SQLite 假绿——
+#    与 SP1"测试连真库"铁律一致；llmwiki_test 测试库由 CI 显式创建（conftest 只探测不建库）。
+# 2. 检索门禁 tools/eval_search.py --check：黄金集 14 条上断言缺口判据 100%、
+#    精确组 Recall 不回退；未配置 DASHSCOPE_API_KEY 时自动走 grep 降级模式
+#    （真实 DashScope API 不进 CI——外网依赖，向量侧逻辑由 tests/test_search_vector.py 的 mock 用例覆盖）。
+# 3. 无 JWT_SECRET 环境变量：测试文件各自 setdefault；api 包 import 零副作用（SP2 v0.1.1 修复）。
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: llmwiki
+          POSTGRES_USER: llmwiki
+          POSTGRES_PASSWORD: llmwiki
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U llmwiki -d llmwiki"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖（运行时 + 测试）
+        run: pip install -r requirements.txt pytest httpx
+
+      - name: 初始化测试库 llmwiki_test
+        run: |
+          python - <<'PY'
+          import psycopg
+          c = psycopg.connect(host="localhost", port=5432,
+                              dbname="postgres", user="llmwiki", password="llmwiki")
+          c.autocommit = True
+          try:
+              c.execute("CREATE DATABASE llmwiki_test")
+              print("llmwiki_test created")
+          except psycopg.errors.DuplicateDatabase:
+              print("llmwiki_test already exists")
+          c.close()
+          PY
+
+      - name: 全量测试（pytest，连 PG）
+        run: python -m pytest tests -q --disable-warnings
+
+      - name: 检索回归门禁（黄金集 --check，grep 降级模式）
+        run: python tools/eval_search.py --check
