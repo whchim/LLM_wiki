@@ -50,7 +50,7 @@ VALID_FRONTMATTER = {
     "type": "concept",
     "title": "叫应体系",
     "status": "active",
-    "source": "RAW/产品资料/样例_示例监测产品产品白皮书.md",
+    "source": "RAW/产品资料/样例_示例监测产品白皮书.md",
     "department": "产品",
     "description": "预警联动机制",
     "tags": ["应急管理", "技术方案"],

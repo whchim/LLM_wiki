@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 企业级 LLM Wiki 知识库平台——基于 LLM Wiki 编译范式 + Google OKF 规范的知识流转系统（个人沉淀 → 审核流转 → 企业共享）。核心思想：入库时编译为结构化 Markdown（而非传统 RAG 每次查询重新检索）。
 
-**当前状态**：Demo 已验收通过；Phase 2 主体完成（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检），133 个测试绿 + CI（测试 + 检索回归门禁）+ LLM 输出契约校验。
+**当前状态**：Demo 已验收通过；Phase 2 主体完成（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检），133 个测试绿 + CI（测试 + Prompt 退化检测）+ LLM 输出契约校验。
 
 **快速启动**：`bash init.sh && docker compose up -d`（三容器：`db`=PostgreSQL 16+pgvector、`api`=FastAPI、`streamlit`=管理台；容器启动自愈建目录/表/初始管理员，幂等）。知识浏览用 Obsidian 打开 `vault/`。
 
-**测试**：`python -m pytest tests -q`。需真实 PostgreSQL（`docker compose up -d db`，测试库 `llmwiki_test`）；无 PG 可用 `PYTEST_SKIP_NO_DB=1` 跳过。隔离目录固定为 `tests/_isolated/`（conftest 覆盖 tmp_path，不依赖系统 %TEMP%），在受限沙箱/CI 环境同样可跑。**CI（GitHub Actions，`.github/workflows/ci.yml`）**：push/PR 触发，起 pgvector service 跑全量测试 + `tools/eval_search.py --check` 检索回归门禁（缺口判据 100%、精确召回不回退；无 key 自动 grep 降级模式）。**改检索/融合逻辑后本地必跑 `python tools/eval_search.py --check` 再过 CI。**
+**测试**：`python -m pytest tests -q`。需真实 PostgreSQL（`docker compose up -d db`，测试库 `llmwiki_test`）；无 PG 可用 `PYTEST_SKIP_NO_DB=1` 跳过。隔离目录固定为 `tests/_isolated/`（conftest 覆盖 tmp_path，不依赖系统 %TEMP%），在受限沙箱/CI 环境同样可跑。**CI（GitHub Actions，`.github/workflows/ci.yml`）**：push/PR 触发，起 pgvector service 跑全量测试 + `tools/prompt_regression.py` 退化检测。**检索回归门禁仅本地**：黄金集（docs/检索评测_黄金集.md，基于真实业务内容）为本地面试资产、不进公开仓库，改检索/融合逻辑后本地跑 `python tools/eval_search.py --check`。
 
 ## 文档体系（文档驱动开发）
 
@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | [docs/LLM_wiki_设计文档.md](docs/LLM_wiki_设计文档.md) | Demo 详细设计（v0.1） | Demo 机制溯源：目录结构、SQLite DDL、函数签名、触发机制 |
 | [docs/LLM_wiki_Phase2_路线图.md](docs/LLM_wiki_Phase2_路线图.md) | Phase 2 主规划（SP1-SP5） | 进入 Phase 2 工作前 |
 | [docs/LLM_wiki_Phase2_SP\*_设计文档.md](docs/LLM_wiki_Phase2_路线图.md) | 各子项目设计（SP1-SP5） | 对应子项目实现前必读；SP4 含检索评测与缺口判据勘误（v0.1.1） |
-| [docs/检索评测_黄金集.md](docs/检索评测_黄金集.md) | 检索离线评测集（14 条） | 改检索/融合逻辑后必跑 `tools/eval_search.py` |
+| [docs/检索评测_黄金集.md](docs/检索评测_黄金集.md) | 检索离线评测集（14 条）——**本地面试资产，不进公开仓库** | 改检索/融合逻辑后本地必跑 `tools/eval_search.py` |
 | [prompts/](prompts/) | 3 个 Agent 系统提示词（编译/审核/问答） | 修改 Agent 行为时 |
 
 **规则**：需求冲突时 PRD 为准；设计细节冲突时设计文档为准（其 1.5 节记录与 PRD 的一致性说明）。修改设计前先检查是否影响 PRD，反之亦然。
