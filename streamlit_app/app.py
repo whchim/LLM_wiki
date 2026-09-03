@@ -29,12 +29,14 @@ with st.sidebar:
     if st.button("退出登录"):
         logout()
 
-    # 搜索（走 API，写入 search_logs）
+    # 搜索（走 API，写入 search_logs；gap=知识缺口：grep 零命中且相似度低于阈值）
     query = st.text_input("搜索知识库（写入 search_logs）")
     if st.button("搜索") and query.strip():
         try:
             res = api.search(query.strip())
-            if res["matches"]:
+            if res.get("gap"):
+                st.info(f"知识库中暂无与「{query}」直接相关的信息（语义相似度低于判定阈值，已记录为知识缺口）。")
+            elif res["matches"]:
                 st.success(f"命中 {res['matches']} 个文件：")
                 for f in res["files"][:10]:
                     st.markdown(f"- `{f}`")

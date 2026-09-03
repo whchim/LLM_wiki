@@ -14,6 +14,16 @@ from api import auth, trace as trace_mod
 
 router = APIRouter(tags=["search"])
 
+# 融合默认权重（SP4 决策 5；tools/tune_search.py 网格标定：14 条黄金集上权重不敏感——
+# vector 排序主导，MRR 全网格=1.00，样本不足区分 grep/vector 权重，扩集后重标定）
+W_GREP_DEFAULT = 0.5
+W_VEC_DEFAULT = 0.3
+
+# 缺口判定阈值（SP4 v0.1.1 勘误落地）：grep 零命中 且 vector 最高相似度 < τ 才记缺口。
+# 标定（tools/tune_search.py）：缺口样本 max_sim∈[0.360,0.487]，命中样本下限 0.545，
+# 分隔区间 (0.487, 0.545)，取中值 0.52（gap 宁偏严，避免看板噪音）。
+GAP_SIM_THRESHOLD = 0.52
+
 
 def _kb_root() -> str:
     """动态读取 KB_ROOT（每次调用），保证测试/容器的 env 生效。"""
@@ -62,7 +72,7 @@ def _vector_search(query: str, top_k: int = 20) -> list[dict] | None:
 
 
 def _fuse(grep_hits: list[str], vec_hits: list[dict] | None,
-          w_grep: float = 0.5, w_vec: float = 0.3) -> list[dict]:
+          w_grep: float = W_GREP_DEFAULT, w_vec: float = W_VEC_DEFAULT) -> list[dict]:
     """加权分数融合：score = w_grep×grep贡献 + w_vec×similarity。
 
     grep_hits 是无序文件路径（字面命中等权，除以 sqrt(n) 温和归一）；
@@ -105,12 +115,18 @@ def search(query: str, request: Request, mode: str = "auto",
                 "vector": len(vec_hits) if vec_hits is not None else 0}
     files = [e["path"] for e in fused][:50]
 
-    db.insert_search_log(q, len(fused), "api")
+    # 缺口判据（SP4 v0.1.1 勘误）：grep 零命中 且 向量最高相似度 < τ。
+    # 向量不可用/库中无向量（vec_hits 为 None 或空）→ 退化为旧语义（grep 零命中即缺口）；
+    # 计分以 match_count=0 表达，看板缺口查询（match_count=0）零改动自动对齐。
+    max_sim = max((v["similarity"] for v in vec_hits), default=None) if vec_hits else None
+    gap = (len(grep_hits) == 0) and (max_sim is None or max_sim < GAP_SIM_THRESHOLD)
+
+    db.insert_search_log(q, 0 if gap else len(fused), "api")
     request.state.trace_detail = {
         "operation": "search", "query": q, "hit_count": len(fused),
-        "channels": channels, "mode": mode,
+        "channels": channels, "mode": mode, "gap": gap, "max_sim": max_sim,
     }
-    return {"query": q, "matches": len(fused), "files": files,
+    return {"query": q, "matches": len(fused), "files": files, "gap": gap,
             "channels": channels, "entries": fused[:20]}
 
 

@@ -214,3 +214,86 @@ def test_backfill_requires_admin(client):
     r = client.post("/admin/backfill-embeddings",
                     headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 403
+
+
+# ---------- 缺口判据（SP4 v0.1.1 勘误落地）----------
+
+def _last_search_log(conn):
+    row = conn.execute(
+        "SELECT query, match_count FROM search_logs ORDER BY timestamp DESC, query LIMIT 1").fetchone()
+    return row
+
+
+def test_gap_true_when_grep_miss_and_low_similarity(client, headers, seeded, monkeypatch):
+    """grep 零命中 + 向量最高相似度 < τ（正交向量 → sim≈0）→ gap=true，match_count 记 0。"""
+    import db
+    from api.routers import search_router as sr
+    with db.get_conn() as conn:
+        _seed_vector("NEXUS/概念/叫应体系.md", conn)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    from api import embedding
+    # [0.5]*512 + [-0.5]*512：与预置 [0.5]*1024 点积=0 → cosine=0 → similarity≈0 < τ
+    monkeypatch.setattr(embedding, "embed_query", lambda q: [0.5] * 512 + [-0.5] * 512)
+
+    r = client.get("/search", params={"query": "员工年会的照片在哪里"}, headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gap"] is True
+    assert body["channels"]["grep"] == 0
+    with db.get_conn() as conn:
+        assert _last_search_log(conn)[1] == 0  # 缺口 → match_count=0（看板零改动可聚合）
+
+
+def test_gap_false_when_high_similarity(client, headers, seeded, monkeypatch):
+    """grep 零命中但向量相似度高（同向 → sim≈1 ≥ τ）→ gap=false，match_count=融合命中数。"""
+    import db
+    with db.get_conn() as conn:
+        _seed_vector("NEXUS/概念/叫应体系.md", conn)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    from api import embedding
+    monkeypatch.setattr(embedding, "embed_query", lambda q: [0.5] * 1024)
+
+    r = client.get("/search", params={"query": "预警发布后如何通知到人"}, headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gap"] is False
+    assert body["matches"] >= 1
+    with db.get_conn() as conn:
+        q, mc = _last_search_log(conn)
+        assert mc >= 1  # 非缺口 → 正常记命中数
+
+
+def test_gap_legacy_when_vector_unavailable(client, headers, seeded, tmp_path, monkeypatch):
+    """向量不可用（无 key）→ 缺口退化为旧语义：grep 零命中即缺口。"""
+    doc = tmp_path / "vault" / "NEXUS" / "概念" / "叫应体系.md"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text("---\ntype: concept\ntitle: 叫应体系\nstatus: active\n---\n\n预警叫应机制说明",
+                   encoding="utf-8")
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+
+    r_miss = client.get("/search", params={"query": "脑机接口芯片进度如何"}, headers=headers)
+    assert r_miss.json()["gap"] is True
+    r_hit = client.get("/search", params={"query": "叫应"}, headers=headers)
+    assert r_hit.json()["gap"] is False
+
+
+def test_gap_not_triggered_when_grep_hits(client, headers, seeded, tmp_path, monkeypatch):
+    """grep 有命中 → 不算缺口（即使向量相似度低）。"""
+    import db
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
+    from api import embedding
+    monkeypatch.setattr(embedding, "embed_query", lambda q: [0.5] * 512 + [-0.5] * 512)
+    doc = tmp_path / "vault" / "NEXUS" / "概念" / "叫应体系低向量.md"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text("---\ntype: concept\ntitle: 叫应体系\nstatus: active\n---\n\n预警叫应机制说明",
+                   encoding="utf-8")
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO knowledge_entries (path, type, title, status, description) "
+            "VALUES ('NEXUS/概念/叫应体系低向量.md','concept','叫应体系低向量','active','叫应')")
+        _seed_vector("NEXUS/概念/叫应体系低向量.md", conn)
+
+    r = client.get("/search", params={"query": "叫应体系"}, headers=headers)
+    body = r.json()
+    assert body["channels"]["grep"] >= 1
+    assert body["gap"] is False  # grep 命中 → 缺口判据短路
