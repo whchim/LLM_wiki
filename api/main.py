@@ -19,6 +19,7 @@ if str(_SHLIB) not in sys.path:
     sys.path.insert(0, str(_SHLIB))
 
 import db
+from api import auth
 from api.routers import admin_router, auth_router, review_router, search_router, upload_router
 
 
@@ -26,6 +27,7 @@ from api.routers import admin_router, auth_router, review_router, search_router,
 async def lifespan(_app: FastAPI):
     # 启动自愈：目录树 + 建表 + 初始管理员（幂等）
     db.ensure_schema()
+    auth.ensure_ready()  # JWT_SECRET 缺失时启动即失败（import 时检查已移除，见 auth.py）
     yield
     db.close_pool()  # 优雅退出，避免连接池线程悬挂
 

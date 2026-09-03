@@ -14,7 +14,6 @@ from pydantic import BaseModel
 
 import db
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "")
 JWT_ALG = "HS256"
 TOKEN_TTL_HOURS = 12
 
@@ -47,21 +46,37 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 # ---- JWT ----
+def _jwt_secret() -> str:
+    """运行时读取 JWT_SECRET（函数内动态读 env，沿"被 import 的模块零副作用"纪律）。"""
+    return os.environ.get("JWT_SECRET", "")
+
+
+def ensure_ready() -> None:
+    """JWT_SECRET 缺失时 fail-fast（安全边界，设计文档第 8 节）。
+
+    运行时检查而非 import 时检查：工具脚本/测试可在未配置 key 的情况下
+    导入 api 包（import 零副作用）；服务侧的 fail-fast 由 main.lifespan 显式调用。"""
+    if not _jwt_secret():
+        raise RuntimeError("JWT_SECRET 未设置：请在环境变量中配置（.env.example 有说明）")
+
+
 def create_access_token(username: str, role: str, expires_h: int = TOKEN_TTL_HOURS) -> str:
     """签发 JWT：payload 含 sub(用户名)、role、exp(过期时间戳)。"""
+    ensure_ready()
     payload = {
         "sub": username,
         "role": role,
         "exp": int(time.time()) + expires_h * 3600,
         "iat": int(time.time()),
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+    return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALG)
 
 
 def decode_token(token: str) -> dict[str, Any] | None:
     """校验 JWT：签名/过期/缺失返回 None（调用方转 401）。"""
+    ensure_ready()
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        return jwt.decode(token, _jwt_secret(), algorithms=[JWT_ALG])
     except jwt.PyJWTError:
         return None
 
@@ -111,12 +126,3 @@ def require_roles(*roles: str):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权限执行此操作")
         return user
     return checker
-
-
-def _fail_fast_check() -> None:
-    """JWT_SECRET 缺失时 fail-fast（设计文档第 8 节安全边界）。"""
-    if not JWT_SECRET:
-        raise RuntimeError("JWT_SECRET 未设置：请在环境变量中配置（.env.example 有说明）")
-
-
-_fail_fast_check()

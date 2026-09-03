@@ -81,3 +81,11 @@ def test_admin_endpoint_requires_admin(client):
     r = client.post("/admin/rebuild-index",
                     headers={"Authorization": f"Bearer {body['access_token']}"})
     assert r.status_code == 403  # 越权被拒
+
+
+def test_ensure_ready_raises_without_secret(monkeypatch):
+    """JWT_SECRET 缺失时 fail-fast（运行时检查，不阻塞 import 本身）。"""
+    from api import auth as auth_mod
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    with pytest.raises(RuntimeError):
+        auth_mod.ensure_ready()

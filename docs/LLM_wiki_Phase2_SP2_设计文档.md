@@ -256,4 +256,5 @@ class ApiClient:
 
 ## Changelog
 
+- **v0.1.1（2026-09-01）**：修复 `auth.py` 的 import 副作用违例——`_fail_fast_check()` 原在模块顶层执行（import 即抛 RuntimeError），任何未配置 JWT_SECRET 的工具/测试脚本无法导入 api 包（踩了 2026-08-24 故事一"被 import 的模块必须零副作用"的纪律）。改为：JWT_SECRET 运行时读取（函数内动态读 env，沿 KB_ROOT 同款惯例）+ `ensure_ready()` 在 encode/decode 前检查；服务侧 fail-fast 移入 `main.lifespan` 显式调用。行为不变（服务启动缺 key 仍即败），工具脚本不再被 import 阻塞。新增测试 `test_ensure_ready_raises_without_secret`。
 - **v0.1（2026-08-24）**：初稿。依据路线图 SP2 + 已拍板决策（D-前端策略=保留 Streamlit+JWT；D-多用户写入=登录+角色权限生效）。决策：PyJWT+pwdlib[argon2]（替代 passlib）、audit 为业务函数非 ASGI 中间件、users 表 SP2 补 DDL、api 独立容器共享 streamlit_app 模块、ensure_schema 扩展初始管理员。错误处理防用户枚举（401 统一）。
