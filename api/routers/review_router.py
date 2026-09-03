@@ -13,18 +13,26 @@ import ops
 from api import auth, trace as trace_mod
 from api.audit import audit_log
 from api.schemas import Message, RejectRequest, ReviewOut
+from output_schema import validate_review_output
 
 router = APIRouter(prefix="/reviews", tags=["review"])
 
 
 def _to_out(rec: dict) -> dict:
-    """DB 行 → 响应模型（ai_scores 已是 dict/JSONB）。"""
+    """DB 行 → 响应模型（ai_scores 已是 dict/JSONB；附带 LLM 输出契约校验标记）。"""
     out = dict(rec)
     if isinstance(out.get("ai_scores"), str):
         try:
             out["ai_scores"] = json.loads(out["ai_scores"])
         except json.JSONDecodeError:
             out["ai_scores"] = None
+    if isinstance(out.get("ai_scores"), dict):
+        errs = validate_review_output(out["ai_scores"])
+        out["ai_scores_valid"] = len(errs) == 0
+        out["ai_scores_errors"] = errs
+    else:
+        out["ai_scores_valid"] = None
+        out["ai_scores_errors"] = []
     return out
 
 

@@ -51,6 +51,9 @@ class ReviewOut(BaseModel):
     department: str | None = None
     ai_verdict: str | None = None
     ai_scores: Any = None
+    # LLM 输出契约校验（output_schema.validate_review_output）：None=无 ai_scores；False=存在契约违例
+    ai_scores_valid: bool | None = None
+    ai_scores_errors: list[str] = []
     human_decision: str | None = None
     reject_reason: str | None = None
     created_at: str | None = None
