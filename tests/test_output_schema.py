@@ -92,6 +92,16 @@ def test_review_low_quality_not_approved():
     assert any("quality<=2" in e for e in errs)
 
 
+def test_review_warning_flagged_or_many_concerns_not_approved():
+    for scores, concerns in [
+        (dict(VALID_REVIEW["scores"], sensitive="warning"), []),
+        (dict(VALID_REVIEW["scores"], compliance="flagged"), []),
+        (dict(VALID_REVIEW["scores"]), ["a", "b", "c"]),
+    ]:
+        d = dict(VALID_REVIEW, verdict="approved", scores=scores, concerns=concerns)
+        assert validate_review_output(d)
+
+
 def test_review_invalid_verdict_enum():
     d = dict(VALID_REVIEW, verdict="maybe")
     assert any("verdict" in e for e in validate_review_output(d))

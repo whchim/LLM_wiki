@@ -31,7 +31,8 @@
         - 不合法 → 按违例清单重试 1 次；仍不合法 → 标记 failed + error_msg（不落盘）
       - 按设计文档 5.3/5.4 落盘：
         - 资源摘要 → `NEXUS/资源/<标题>.md`（YAML: type=resource, status=active, fingerprint, source=<raw_path>）
-          （资源摘要免审直接 active 入库（设计文档 4.4），概念页才进审核）
+          资源也必须先执行确定性完整性/敏感信息扫描；命中 `blocked`、缺少必填字段或写入失败时不得标记 active，
+          应写入 failed 并保留在待处理队列。扫描通过后才可按事实摘要策略免人工审核发布。
         - 概念页 → `pending_review/<概念名>.md`（YAML: type=concept, status=pending, source）
       - 更新 index.md（资源节，幂等追加；同时维护头部统计行 `> 资源 N 篇 · 概念 M 个 · 最后更新 YYYY-MM-DD`，见设计文档 5.5）
       - upsert knowledge_entries（资源 active + 概念 pending；PostgreSQL，经 db.py 或等价 SQL）

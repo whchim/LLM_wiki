@@ -13,6 +13,7 @@ import importlib
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,6 @@ import psycopg
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "streamlit_app"))
 
-ISOLATED = ROOT / "tests" / "_isolated"
 
 # 测试库连接参数（与生产 llmwiki 区分，避免污染）
 TEST_DB = {
@@ -72,10 +72,11 @@ def _close_pool_at_exit():
 
 @pytest.fixture(scope="session")
 def _isolated_root() -> Path:
-    if ISOLATED.exists():
-        shutil.rmtree(ISOLATED)
-    ISOLATED.mkdir(parents=True)
-    yield ISOLATED
+    # 使用每次运行独立的系统临时目录，避免 Windows 下仓库内残留文件
+    # 被编辑器/杀毒软件占用，导致整个测试集在 setup 阶段失败。
+    isolated = Path(tempfile.mkdtemp(prefix="llmwiki-tests-"))
+    yield isolated
+    shutil.rmtree(isolated, ignore_errors=True)
 
 
 @pytest.fixture
@@ -93,6 +94,9 @@ def _env(monkeypatch, tmp_path, request):
     """每个测试：指向测试库 + 重置 schema + 刷新 db 模块。
 
     无可用 PostgreSQL 时测试跳过（除非 PYTEST_SKIP_NO_DB 已设）。"""
+    # 纯函数契约测试不需要重置共享 PostgreSQL，避免无关的数据库锁竞争。
+    if request.node.get_closest_marker("no_db") is not None:
+        return
     if not _pg_available():
         if os.environ.get("PYTEST_SKIP_NO_DB"):
             pytest.skip("未检测到可用 PostgreSQL（docker compose up -d db）")

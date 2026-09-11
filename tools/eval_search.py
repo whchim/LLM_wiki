@@ -13,7 +13,7 @@
 1. 评测直接复用 api.routers.search_router 的检索原语（_grep/_vector_search/_fuse），
    **不经过 /search 端点**——避免评测查询写入 search_logs 污染知识缺口看板
    （评测查询 ≠ 用户真实查询，且缺口判据要求"零命中才记缺口"）。
-2. 黄金集见 docs/检索评测_黄金集.md；预期命中为人工标注的"知识上应命中"条目。
+2. 黄金集见 docs/VAL-03_检索评测_黄金集.md；预期命中为人工标注的"知识上应命中"条目。
 3. 指标：MRR@10（首个预期命中的位置倒数）、Recall@10（top10 中预期命中的比例）、
    缺口检出力（缺口查询被误报为命中的比例）。
 """
@@ -32,7 +32,7 @@ if str(_SHARED) not in sys.path:
 from api import embedding
 from api.routers import search_router as sr
 
-GOLD_PATH = ROOT / "docs" / "检索评测_黄金集.md"
+GOLD_PATH = ROOT / "docs" / "VAL-03_检索评测_黄金集.md"
 K = 10  # MRR/Recall 的截断深度
 
 

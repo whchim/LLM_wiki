@@ -56,8 +56,12 @@ def ensure_ready() -> None:
 
     运行时检查而非 import 时检查：工具脚本/测试可在未配置 key 的情况下
     导入 api 包（import 零副作用）；服务侧的 fail-fast 由 main.lifespan 显式调用。"""
-    if not _jwt_secret():
+    secret = _jwt_secret()
+    if not secret:
         raise RuntimeError("JWT_SECRET 未设置：请在环境变量中配置（.env.example 有说明）")
+    if os.environ.get("APP_ENV", "development").lower() in {"prod", "production"}:
+        if secret == "dev-secret-change-me-please-32bytes" or len(secret) < 32:
+            raise RuntimeError("生产环境 JWT_SECRET 必须至少 32 个字符且不能使用开发默认值")
 
 
 def create_access_token(username: str, role: str, expires_h: int = TOKEN_TTL_HOURS) -> str:

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 import db
 import ops
+import rules
 from api import auth, trace as trace_mod
 from api.audit import audit_log
 from api.schemas import Message, RejectRequest, ReviewOut
@@ -54,6 +55,14 @@ def approve(review_id: int, request: Request,
     rec = _find_review(review_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="审核记录不存在")
+    _require_transition(rec, None, "pending", "通过")
+    source = Path(ops.KB_ROOT) / rec["nexus_path"]
+    try:
+        text = source.read_text(encoding="utf-8")
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=409, detail=f"文件不存在，可能已被处理：{e}")
+    if rules.check_sensitive(text) == "blocked":
+        raise HTTPException(status_code=409, detail="条目命中 blocked 敏感规则，禁止发布")
     try:
         target = ops.approve_entry(review_id, rec["nexus_path"],
                                    "NEXUS/概念/" + Path(rec["nexus_path"]).name)
@@ -75,6 +84,7 @@ def reject(review_id: int, body: RejectRequest, request: Request,
     rec = _find_review(review_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="审核记录不存在")
+    _require_transition(rec, None, "pending", "驳回")
     ops.reject_entry(review_id, rec["nexus_path"], body.reason)
     audit_log(user.username, "review_reject", target_path=rec["nexus_path"],
               detail={"review_id": review_id, "reason": body.reason})
@@ -91,6 +101,7 @@ def resubmit(review_id: int, request: Request,
     rec = _find_review(review_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="审核记录不存在")
+    _require_transition(rec, "rejected", "draft", "重新提交")
     ops.resubmit(review_id, rec["nexus_path"])
     ops.write_trigger("review", [rec["nexus_path"]], "api")
     audit_log(user.username, "review_resubmit", target_path=rec["nexus_path"],
@@ -117,10 +128,14 @@ def retry_ai(review_id: int, request: Request,
 
 
 def _find_review(review_id: int) -> dict | None:
-    for r in db.list_pending_reviews():
-        if r["id"] == review_id:
-            return r
-    for r in db.list_rejected_reviews():
-        if r["id"] == review_id:
-            return r
-    return None
+    return db.get_review(review_id)
+
+
+def _require_transition(rec: dict, decision: str | None,
+                        entry_status: str, action: str) -> None:
+    if rec.get("human_decision") != decision or rec.get("entry_status") != entry_status:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"当前状态不允许{action}：human_decision={rec.get('human_decision')}, "
+                    f"entry_status={rec.get('entry_status')}"),
+        )

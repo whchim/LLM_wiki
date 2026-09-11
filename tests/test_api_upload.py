@@ -98,3 +98,14 @@ def test_upload_trigger_failure_compensates(client, headers, tmp_path, monkeypat
         rows = conn.execute("SELECT status, error_msg FROM compile_tasks").fetchall()
     assert rows and all(x[0] == "failed" for x in rows)
     assert all("触发文件写入失败" in (x[1] or "") for x in rows)
+
+
+def test_upload_does_not_overwrite_existing_file(client, headers, tmp_path):
+    from pathlib import Path
+    target = tmp_path / "vault" / "RAW" / "项目" / "same.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"original")
+    r = client.post("/uploads", files=[("files", ("same.md", b"new", "text/markdown"))],
+                    data={"category": "项目"}, headers=headers)
+    assert r.status_code == 200 and r.json()["ok"] == 0
+    assert target.read_bytes() == b"original"

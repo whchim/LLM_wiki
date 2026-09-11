@@ -135,6 +135,25 @@ def test_search_degrades_to_grep_without_key(client, headers, seeded, monkeypatc
     assert body["channels"] == {"grep": body["matches"], "vector": 0}
 
 
+def test_search_requires_auth_and_limits_query(client):
+    assert client.get("/search", params={"query": "叫应"}).status_code == 401
+    assert client.get("/search", params={"query": "x" * 301}).status_code == 422
+
+
+def test_grep_excludes_non_active_documents(client, headers, tmp_path, monkeypatch):
+    nexus = tmp_path / "vault" / "NEXUS" / "概念"
+    nexus.mkdir(parents=True, exist_ok=True)
+    (nexus / "draft.md").write_text(
+        "---\ntype: concept\ntitle: draft\nstatus: draft\nsource: RAW/x\n---\n\n机密关键词",
+        encoding="utf-8")
+    (nexus / "active.md").write_text(
+        "---\ntype: concept\ntitle: active\nstatus: active\nsource: RAW/x\n---\n\n公开关键词",
+        encoding="utf-8")
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    body = client.get("/search", params={"query": "关键词", "mode": "grep"}, headers=headers).json()
+    assert body["files"] == ["NEXUS/概念/active.md"]
+
+
 def test_search_degrades_on_embedding_error(client, headers, seeded, monkeypatch):
     """embedding 服务故障 → 降级 grep-only，不崩。"""
     monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")

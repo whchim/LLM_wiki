@@ -9,7 +9,8 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # 共享模块路径：api/ 内 `import db/ops` 指向 streamlit_app/（容器已设 PYTHONPATH，本机兜底）
@@ -20,7 +21,7 @@ if str(_SHLIB) not in sys.path:
 
 import db
 from api import auth
-from api.routers import admin_router, auth_router, review_router, search_router, upload_router
+from api.routers import admin_router, auth_router, clarification_router, customer_state_router, review_router, search_router, upload_router
 
 
 @asynccontextmanager
@@ -40,9 +41,9 @@ app = FastAPI(
 )
 
 # CORS：仅允许 Streamlit 管理台来源（设计文档第 8 节）
-_origins = [
-    os.environ.get("CORS_ORIGIN", "http://localhost:8501"),
-]
+_origins = [origin.strip() for origin in os.environ.get(
+    "CORS_ORIGIN", "http://localhost:8501,http://localhost:5173"
+).split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
@@ -51,11 +52,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+MAX_REQUEST_BODY = 60 * 1024 * 1024  # 上传接口允许 50MB 批次，留出 multipart 开销
+
+
+@app.middleware("http")
+async def security_limits(request: Request, call_next):
+    """统一请求大小门禁和基础安全响应头；业务路由仍负责字段级校验。"""
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_REQUEST_BODY:
+        return JSONResponse(status_code=413, content={"detail": "请求体超过 60MB 限制"})
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
 app.include_router(auth_router.router)
 app.include_router(upload_router.router)
 app.include_router(review_router.router)
 app.include_router(search_router.router)
 app.include_router(admin_router.router)
+app.include_router(customer_state_router.router)
+app.include_router(clarification_router.router)
 
 
 @app.get("/healthz", tags=["system"])

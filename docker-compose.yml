@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: llmwiki
       POSTGRES_PASSWORD: llmwiki
     ports:
-      - "5432:5432"           # 本机开发/测试直连
+      - "127.0.0.1:5432:5432" # 仅本机开发/测试直连，避免数据库暴露公网
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +19,7 @@ services:
     build: .
     command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "8000:8000"           # FastAPI REST API
+      - "127.0.0.1:8000:8000" # 生产应由反向代理对外提供 HTTPS
     volumes:
       - ./vault:/app/vault    # 共享 vault 卷（与 streamlit 同一挂载，路径一致）
     depends_on:
@@ -32,6 +32,7 @@ services:
       - DB_NAME=llmwiki
       - DB_USER=llmwiki
       - DB_PASS=llmwiki
+      - APP_ENV=${APP_ENV:-development}
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-please-32bytes}
       - ADMIN_INIT_USER=${ADMIN_INIT_USER:-admin}
       - ADMIN_INIT_PASS=${ADMIN_INIT_PASS:-admin123}
@@ -45,7 +46,7 @@ services:
   streamlit:
     build: .
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     volumes:
       - ./vault:/app/vault    # Obsidian Vault（知识 Markdown 与 _triggers/）
     depends_on:
@@ -61,6 +62,7 @@ services:
       - DB_USER=llmwiki
       - DB_PASS=llmwiki
       - API_BASE=http://api:8000
+      - APP_ENV=${APP_ENV:-development}
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-please-32bytes}
     restart: unless-stopped
 

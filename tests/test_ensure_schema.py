@@ -42,4 +42,7 @@ def test_ensure_schema_is_idempotent(tmp_path, monkeypatch):
     m.ensure_schema()
     assert _tables() == {"knowledge_entries", "compile_tasks", "pending_reviews",
                          "search_logs", "audit_logs", "contributors", "conflicts", "users",
-                         "trace_events", "health_reports"}
+                         "trace_events", "health_reports", "customers", "conversations",
+                         "evidence", "state_proposals", "state_decisions", "state_events",
+                         "current_states", "sensitive_numeric_values", "clarification_sessions",
+                         "clarification_turns", "clarification_answers"}

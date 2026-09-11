@@ -127,3 +127,51 @@ class ApiClient:
 
     def rebuild_index(self) -> dict:
         return self._request("POST", "/admin/rebuild-index")
+
+    # ---- 销售客户状态 ----
+    def pending_state_proposals(self, limit: int = 100) -> list:
+        return self._request("GET", "/customer-states/proposals/pending", params={"limit": limit})
+
+    def current_customer_state(self, customer_id: str) -> dict:
+        return self._request("GET", f"/customer-states/{customer_id}")
+
+    def customer_state_events(self, customer_id: str, limit: int = 100) -> list:
+        return self._request("GET", f"/customer-states/{customer_id}/events", params={"limit": limit})
+
+    def decide_customer_state(self, proposal_id: str, decision: str,
+                              final_state: str | None = None, reason: str | None = None) -> dict:
+        return self._request("POST", f"/customer-states/proposals/{proposal_id}/decision",
+                             json_body={"decision": decision, "final_state": final_state, "reason": reason})
+
+    def withdraw_customer_state(self, customer_id: str, reason: str) -> dict:
+        return self._request("POST", f"/customer-states/{customer_id}/withdraw",
+                             json_body={"reason": reason})
+
+    # ---- 销售事实澄清 ----
+    def sales_intake(self, *, idempotency_key: str, customer_id: str, content: str,
+                     occurred_at: str, source_type: str = "meeting_note",
+                     source_ref: str | None = None) -> dict:
+        return self._request("POST", "/clarifications/intake", json_body={
+            "idempotency_key": idempotency_key, "customer_id": customer_id,
+            "content": content, "occurred_at": occurred_at,
+            "source_type": source_type, "source_ref": source_ref,
+        })
+
+    def create_clarification_session(self, conversation_id: str, max_rounds: int = 2) -> dict:
+        return self._request("POST", "/clarifications/sessions",
+                             json_body={"conversation_id": conversation_id, "max_rounds": max_rounds})
+
+    def clarification_session(self, session_id: str) -> dict:
+        return self._request("GET", f"/clarifications/sessions/{session_id}")
+
+    def answer_clarification(self, session_id: str, turn_id: str, question_id: str,
+                             answer_text_redacted: str) -> dict:
+        return self._request("POST", f"/clarifications/sessions/{session_id}/answers",
+                             json_body={"turn_id": turn_id, "question_id": question_id,
+                                        "answer_text_redacted": answer_text_redacted})
+
+    def clarification_sessions(self) -> list:
+        return self._request("GET", "/clarifications/sessions")
+
+    def my_clarification_sessions(self) -> list:
+        return self._request("GET", "/clarifications/mine")

@@ -16,6 +16,9 @@ logger = logging.getLogger("llmwiki.audit")
 ACTIONS = {
     "login", "upload", "review_approve", "review_reject", "review_resubmit",
     "rebuild_index", "retry_compile", "trigger_write",
+    "backfill_embeddings",
+    "customer_state_decision", "customer_state_withdraw", "customer_state_correction",
+    "customer_state_expire",
 }
 
 

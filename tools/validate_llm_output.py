@@ -3,7 +3,7 @@
 把 prompts 里的输出契约变成可执行断言：LLM（Claude Code 引擎）在编译/审核
 产物写入前调用本工具自检，失败则重试或标记 failed——"输出可不可接受"由代码判定，
 不靠 prompt 自觉。校验规则见 streamlit_app/output_schema.py 与
-docs/LLM_输出校验_设计说明.md。
+docs/VAL-01_LLM_输出校验_设计说明.md。
 
 用法：
     python tools/validate_llm_output.py review <output.json>      # 审核 Agent 六维度 JSON

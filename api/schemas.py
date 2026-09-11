@@ -66,3 +66,43 @@ class RejectRequest(BaseModel):
 
 class Message(BaseModel):
     message: str
+
+
+# ---- 销售客户状态 ----
+class StateDecisionRequest(BaseModel):
+    decision: str
+    final_state: str | None = None
+    reason: str | None = None
+    evidence_refs: list[dict] | None = None
+
+
+class StateWithdrawRequest(BaseModel):
+    reason: str
+
+
+class StateCorrectionRequest(BaseModel):
+    final_state: str
+    reason: str
+    evidence_refs: list[dict]
+    valid_until: str | None = None
+
+
+class ClarificationSessionRequest(BaseModel):
+    conversation_id: str
+    max_rounds: int = 2
+
+
+class SalesIntakeRequest(BaseModel):
+    """销售工作台提交的脱敏中文纪要；submitted_by 由 JWT 注入。"""
+    idempotency_key: str
+    customer_id: str
+    content: str
+    occurred_at: str
+    source_type: str = "meeting_note"
+    source_ref: str | None = None
+
+
+class ClarificationAnswerRequest(BaseModel):
+    turn_id: str
+    question_id: str
+    answer_text_redacted: str

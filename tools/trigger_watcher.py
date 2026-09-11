@@ -14,8 +14,9 @@ watcher 常驻后台轮询 vault/_triggers/，发现新纸条即以 headless 模
     WATCHER_TIMEOUT    单次 claude 执行超时秒数（默认 900 = 15 分钟）
 
 安全说明：
-    headless 无人值守使用 --permission-mode bypassPermissions（本机个人场景）。
-    如需收紧，改为 --allowedTools 白名单（见 README 部署节）。
+    默认使用 --permission-mode acceptEdits；只有明确设置
+    WATCHER_PERMISSION_MODE=bypassPermissions 才会放开全部权限。
+    对外部署应进一步通过 Claude Code 的 allowedTools/沙箱限制命令范围。
 
 设计要点：
 - 防抖：发现纸条后等待文件写入稳定（大小不变 2 秒）再消费，避免读到半写文件
@@ -40,6 +41,12 @@ sys.path.insert(0, str(ROOT / "streamlit_app"))
 
 INTERVAL = int(os.environ.get("WATCHER_INTERVAL", "5"))
 TIMEOUT = int(os.environ.get("WATCHER_TIMEOUT", "900"))
+PERMISSION_MODE = os.environ.get("WATCHER_PERMISSION_MODE", "acceptEdits")
+if PERMISSION_MODE not in {"default", "acceptEdits", "plan", "bypassPermissions"}:
+    raise ValueError("WATCHER_PERMISSION_MODE 必须是 default/acceptEdits/plan/bypassPermissions")
+if (os.environ.get("APP_ENV", "development").lower() in {"prod", "production"}
+        and PERMISSION_MODE == "bypassPermissions"):
+    raise RuntimeError("生产环境禁止 WATCHER_PERMISSION_MODE=bypassPermissions")
 STABLE_SECS = 2          # 文件大小稳定判定窗口
 RAW_EXTS = {".md", ".txt"}   # SP3：RAW 直放监听的扩展名白名单
 
@@ -176,7 +183,7 @@ def run_claude() -> tuple[int, str]:
         return 127, str(e)
     cmd = [
         claude, "-p", "/process-triggers",
-        "--permission-mode", "bypassPermissions",
+        "--permission-mode", PERMISSION_MODE,
         "--output-format", "text",
     ]
     try:

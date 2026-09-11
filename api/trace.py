@@ -23,6 +23,9 @@ logger = logging.getLogger("llmwiki.trace")
 SPAN_TYPES = {
     "login", "search", "review_approve", "review_reject", "review_resubmit",
     "review_retry_ai", "rebuild_index",
+    "customer_state_decision", "customer_state_withdraw",
+    "customer_state_correction", "customer_state_expire",
+    "clarification_session_create", "clarification_answer", "sales_intake",
 }
 
 
@@ -55,7 +58,10 @@ def trace(span_type: str):
     if span_type not in SPAN_TYPES:
         raise RuntimeError(f"未知 span_type: {span_type}")
 
-    def dependency(request: Request, user=auth.get_current_user):
+    def dependency(
+        request: Request,
+        user: auth.User = Depends(auth.get_current_user),
+    ):
         # 先取用户，供端点与 trace 使用（注入到 request.state 供端点读取）
         request.state.current_user = user
         start = time.perf_counter()

@@ -20,7 +20,7 @@ def main() -> None:
         lines.append(f"| {i} | {title} | {chars} | {links} | "
                      f"{'✓' if structure else '✗'} |  |  |  |  |")
 
-    out = ROOT / "docs" / "评估_概念页质量标注表.md"
+    out = ROOT / "docs" / "VAL-02_评估_概念页质量标注表.md"
     out.parent.mkdir(exist_ok=True)
     out.write_text(
         "# 概念页编译质量标注表（mini 评估集）\n\n"

@@ -1,13 +1,13 @@
 """评估汇总：解析标注表，输出简历可用的质量数字。
 
-用法：人工在 docs/评估_概念页质量标注表.md 填完三列后运行：
+用法：人工在 docs/VAL-02_评估_概念页质量标注表.md 填完三列后运行：
     python tools/eval_summary.py
 """
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SHEET = ROOT / "docs" / "评估_概念页质量标注表.md"
+SHEET = ROOT / "docs" / "VAL-02_评估_概念页质量标注表.md"
 
 
 def main() -> None:

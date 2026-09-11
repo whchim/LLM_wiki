@@ -104,3 +104,10 @@ def test_reject_and_resubmit(client, headers, tmp_path):
 def test_approve_missing_review_404(client, headers):
     r = client.post("/reviews/99999/approve", headers=headers)
     assert r.status_code == 404
+
+
+def test_rejected_review_cannot_be_approved(client, headers, tmp_path):
+    rid, _ = _make_pending_review(tmp_path)
+    assert client.post(f"/reviews/{rid}/reject", headers=headers,
+                       json={"reason": "测试"}).status_code == 200
+    assert client.post(f"/reviews/{rid}/approve", headers=headers).status_code == 409

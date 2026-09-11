@@ -7,7 +7,7 @@ import json
 import math
 import os
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 import db
 from api import auth, trace as trace_mod
@@ -43,11 +43,31 @@ def _grep(query: str) -> list[str]:
             full = os.path.join(dirpath, fn)
             try:
                 with open(full, encoding="utf-8") as f:
-                    if query in f.read():
-                        hits.append(os.path.relpath(full, _kb_root()).replace(os.sep, "/"))
+                    text = f.read()
+                # 文件系统可能比索引更新，必须以 frontmatter 的 active 为准，
+                # 避免 draft/stale 文档通过 grep 通道泄露。
+                if not _is_active(text):
+                    continue
+                if query in text:
+                    hits.append(os.path.relpath(full, _kb_root()).replace(os.sep, "/"))
             except (OSError, UnicodeDecodeError):
                 continue
     return hits
+
+
+def _is_active(text: str) -> bool:
+    """容错解析 YAML frontmatter；损坏或缺失状态的文件默认不返回。"""
+    if not text.startswith("---"):
+        return False
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return False
+    try:
+        import yaml
+        meta = yaml.safe_load(parts[1])
+    except Exception:
+        return False
+    return isinstance(meta, dict) and meta.get("status") == "active"
 
 
 def _vector_search(query: str, top_k: int = 20) -> list[dict] | None:
@@ -97,7 +117,8 @@ def _fuse(grep_hits: list[str], vec_hits: list[dict] | None,
 
 
 @router.get("/search")
-def search(query: str, request: Request, mode: str = "auto",
+def search(request: Request, query: str = Query(..., min_length=1, max_length=300),
+           mode: str = Query("auto", pattern="^(auto|grep|vector)$"),
            user: auth.User = Depends(trace_mod.trace("search"))) -> dict:
     """混合检索（SP4）：grep 精确 + 向量语义（auto=融合；grep/vector=单通道）。
 
@@ -131,7 +152,7 @@ def search(query: str, request: Request, mode: str = "auto",
 
 
 @router.get("/search/missed")
-def missed(limit: int = 20,
+def missed(limit: int = Query(20, ge=1, le=500),
            user: auth.User = Depends(auth.get_current_user)) -> dict:
     """搜索未命中 Top N（知识缺口）——混合检索后=双通道都零命中的查询。"""
     return {"items": db.top_missed_queries(limit)}
@@ -144,7 +165,7 @@ def stats(user: auth.User = Depends(auth.get_current_user)) -> dict:
 
 
 @router.get("/entries")
-def entries(limit: int = 100, offset: int = 0,
+def entries(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0, le=100000),
             type_: str | None = None, status: str | None = None,
             user: auth.User = Depends(auth.get_current_user)) -> dict:
     """条目列表（分页/过滤）。"""

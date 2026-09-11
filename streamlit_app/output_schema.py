@@ -1,6 +1,6 @@
 """LLM 输出契约校验：把 prompt 里的输出契约代码化（确定性逻辑，不依赖 LLM）。
 
-三组校验对应三个产物入口（接入点与契约来源见 docs/LLM_输出校验_设计说明.md）：
+三组校验对应三个产物入口（接入点与契约来源见 docs/VAL-01_LLM_输出校验_设计说明.md）：
 - validate_review_output    : 审核 Agent 六维度 JSON（契约：prompts/review_prompt.md 输出格式 + 判定逻辑）
 - validate_compile_output   : 编译 Agent JSON（契约：prompts/compile_prompt.md 输出格式 + 编译规则）
 - validate_entry_frontmatter: 落盘条目 YAML Frontmatter（约束：vault/SCHEMA.md）
@@ -92,6 +92,13 @@ def validate_review_output(d: dict) -> list[str]:
             and not isinstance(scores["quality"], bool) and scores["quality"] <= 2
             and verdict == "approved"):
         errs.append("判定一致性：scores.quality<=2 时 verdict 不应为 approved（应为 needs_human_review）")
+    if scores.get("sensitive") == "warning" and verdict == "approved":
+        errs.append("判定一致性：scores.sensitive=warning 时 verdict 不应为 approved（需人工复核）")
+    if scores.get("compliance") == "flagged" and verdict == "approved":
+        errs.append("判定一致性：scores.compliance=flagged 时 verdict 不应为 approved（需人工复核）")
+    concerns = d.get("concerns")
+    if isinstance(concerns, list) and len(concerns) >= 3 and verdict == "approved":
+        errs.append("判定一致性：concerns 数量>=3 时 verdict 不应为 approved（需人工复核）")
     return errs
 
 

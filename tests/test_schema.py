@@ -20,7 +20,10 @@ def test_schema_creates_expected_tables(tmp_path):
     with _conn() as conn:
         tables = _tables(conn)
     assert {"knowledge_entries", "compile_tasks", "pending_reviews", "search_logs",
-            "audit_logs", "contributors", "conflicts", "users"} <= tables
+            "audit_logs", "contributors", "conflicts", "users", "customers",
+            "conversations", "evidence", "state_proposals", "state_decisions",
+            "state_events", "current_states", "sensitive_numeric_values", "clarification_sessions",
+            "clarification_turns", "clarification_answers"} <= tables
 
 
 def test_schema_is_idempotent(tmp_path):
@@ -34,4 +37,7 @@ def test_schema_is_idempotent(tmp_path):
         tables = _tables(conn)
     assert tables == {"knowledge_entries", "compile_tasks", "pending_reviews", "search_logs",
                       "audit_logs", "contributors", "conflicts", "users", "trace_events",
-                      "health_reports"}
+                      "health_reports", "customers", "conversations", "evidence",
+                      "state_proposals", "state_decisions", "state_events", "current_states",
+                      "sensitive_numeric_values", "clarification_sessions", "clarification_turns",
+                      "clarification_answers"}
