@@ -115,6 +115,16 @@ h1, h2, h3, p { margin-top: 0; }
 .sales-grid { margin-top: 30px; grid-template-columns: .9fr 1.1fr; align-items: start; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; margin-bottom: 16px; }
 .intake-panel form > label { margin-bottom: 15px; }
+/* 纪要正文：标签行内放「从文件导入」，文件选择器隐藏，载入后用 file-chip 提示来源 */
+.content-field { margin-bottom: 15px; }
+.content-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; color: #b7c5d9; font-size: 13px; }
+.content-label .link-btn { display: inline-flex; align-items: center; gap: 6px; color: var(--cyan); font-size: 12px; font-weight: 600; }
+.content-label .link-btn:hover { color: #7be6e1; }
+.file-input { display: none; }
+.file-chip { display: flex; align-items: center; gap: 7px; margin: 9px 0 0; padding: 8px 10px; border: 1px solid rgba(86,214,208,.24); border-radius: 8px; color: #9fd8d5; background: rgba(86,214,208,.07); font-size: 12px; line-height: 1.5; }
+.file-chip span { min-width: 0; overflow-wrap: anywhere; }
+.file-chip button { margin-left: auto; flex: none; padding: 3px 7px; border: 1px solid var(--line); border-radius: 6px; color: #adc0d8; background: transparent; font-size: 11px; }
+.file-chip button:hover { border-color: rgba(255,126,139,.4); color: #ffc2c9; }
 .guardrail { margin: 14px 0 20px; padding: 11px; border-radius: 8px; color: #8ca4bf; background: rgba(86,214,208,.07); }
 .session-picker { display: grid; gap: 3px; max-height: 260px; overflow: auto; }
 .session-item { justify-content: space-between; padding: 11px 4px; }
