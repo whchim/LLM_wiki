@@ -40,3 +40,6 @@ frontend/dist/
 
 # npm 本地缓存目录（不进仓库）
 .npm-cache/
+
+# 本地数据备份（含历史业务内容，绝不进仓库）
+.local-backup/
