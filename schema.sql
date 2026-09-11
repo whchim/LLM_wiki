@@ -120,3 +120,148 @@ CREATE TABLE IF NOT EXISTS health_reports (
     growth_rate       REAL,                          -- 相比上次巡检增长率
     detail            JSONB                          -- 明细清单（路径/配对）
 );
+
+-- Sales customer state Agent（阶段 2）：客户状态生命周期
+CREATE TABLE IF NOT EXISTS customers (
+    customer_id TEXT PRIMARY KEY,
+    display_name_redacted TEXT,
+    owner_user_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    conversation_id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL REFERENCES customers(customer_id),
+    idempotency_key TEXT NOT NULL UNIQUE,
+    source_type TEXT NOT NULL CHECK (source_type IN ('meeting_note','transcript','chat_summary')),
+    occurred_at TIMESTAMPTZ NOT NULL,
+    submitted_by TEXT NOT NULL,
+    source_ref TEXT,
+    processing_status TEXT NOT NULL DEFAULT 'received'
+        CHECK (processing_status IN ('received','processed','needs_review','rejected')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_customer ON conversations(customer_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS evidence (
+    evidence_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),
+    content_redacted TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    source_ref TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_conversation ON evidence(conversation_id);
+
+-- Sales clarification Agent（阶段 4）：有限轮次的澄清会话，原始证据不可变
+CREATE TABLE IF NOT EXISTS clarification_sessions (
+    session_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(conversation_id),
+    status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open','ready_for_proposal','needs_human_review','completed','cancelled')),
+    round_count INTEGER NOT NULL DEFAULT 0 CHECK (round_count >= 0),
+    max_rounds INTEGER NOT NULL DEFAULT 2 CHECK (max_rounds BETWEEN 1 AND 2),
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_clarification_sessions_status ON clarification_sessions(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS clarification_turns (
+    turn_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES clarification_sessions(session_id),
+    turn_no INTEGER NOT NULL CHECK (turn_no >= 1),
+    status TEXT NOT NULL CHECK (status IN ('needs_clarification','ready_for_proposal','insufficient_evidence','human_review')),
+    agent_output JSONB NOT NULL,
+    question_count INTEGER NOT NULL DEFAULT 0 CHECK (question_count BETWEEN 0 AND 2),
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    latency_ms INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (session_id, turn_no)
+);
+CREATE INDEX IF NOT EXISTS idx_clarification_turns_session ON clarification_turns(session_id, turn_no);
+
+CREATE TABLE IF NOT EXISTS clarification_answers (
+    answer_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES clarification_sessions(session_id),
+    turn_id TEXT NOT NULL REFERENCES clarification_turns(turn_id),
+    question_id TEXT NOT NULL,
+    answer_text_redacted TEXT NOT NULL,
+    submitted_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (turn_id, question_id)
+);
+CREATE INDEX IF NOT EXISTS idx_clarification_answers_session ON clarification_answers(session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS state_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),
+    current_state TEXT,
+    proposed_state TEXT NOT NULL,
+    decision TEXT NOT NULL DEFAULT 'propose'
+        CHECK (decision IN ('propose','needs_review','reject')),
+    confidence NUMERIC(5,4) NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    reasoning_summary TEXT,
+    next_action TEXT,
+    valid_until TIMESTAMPTZ,
+    needs_human_confirmation BOOLEAN NOT NULL DEFAULT true,
+    risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    model_version TEXT,
+    prompt_version TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','approved','rejected','superseded')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_proposals_status ON state_proposals(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS state_decisions (
+    decision_id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL UNIQUE REFERENCES state_proposals(proposal_id),
+    decision TEXT NOT NULL CHECK (decision IN ('approved','modified','rejected')),
+    final_state TEXT,
+    decided_by TEXT NOT NULL,
+    reason TEXT,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS state_events (
+    event_id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL REFERENCES customers(customer_id),
+    decision_id TEXT REFERENCES state_decisions(decision_id),
+    event_type TEXT NOT NULL CHECK (event_type IN ('state_confirmed','state_expired','state_withdrawn','state_corrected')),
+    state TEXT NOT NULL CHECK (state IN ('new_lead','contacted','need_confirmed','solution_eval','commercial_negotiation','won','lost_or_paused','expired')),
+    effective_at TIMESTAMPTZ NOT NULL,
+    valid_until TIMESTAMPTZ,
+    created_by TEXT NOT NULL,
+    evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_state_events_customer ON state_events(customer_id, effective_at DESC);
+
+CREATE TABLE IF NOT EXISTS current_states (
+    customer_id TEXT PRIMARY KEY REFERENCES customers(customer_id),
+    state TEXT NOT NULL CHECK (state IN ('new_lead','contacted','need_confirmed','solution_eval','commercial_negotiation','won','lost_or_paused','expired')),
+    source_event_id TEXT NOT NULL,
+    effective_at TIMESTAMPTZ NOT NULL,
+    valid_until TIMESTAMPTZ,
+    projection_version INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_current_states_event ON current_states(source_event_id);
+
+CREATE TABLE IF NOT EXISTS sensitive_numeric_values (
+    numeric_value_id TEXT PRIMARY KEY,
+    evidence_id TEXT NOT NULL REFERENCES evidence(evidence_id),
+    field_type TEXT NOT NULL CHECK (field_type IN ('amount','budget','discount','quote','quantity','other')),
+    ciphertext TEXT NOT NULL,
+    key_version TEXT NOT NULL,
+    unit TEXT,
+    comparison_bucket TEXT,
+    access_policy TEXT NOT NULL DEFAULT 'owner_only',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sensitive_numeric_evidence ON sensitive_numeric_values(evidence_id);
