@@ -1,0 +1,18 @@
+#!/bin/bash
+# 由官方 postgres 镜像的 entrypoint 在【每次容器启动】时执行（docker-entrypoint-initdb.d）。
+# 官方镜像只在数据目录为空时才跑 *.sql，但会执行无扩展名的可执行脚本，因此本文件不写 .sh 后缀。
+# 幂等：用 psql 的 \gexec 做"不存在才建"，重复启动无副作用。
+set -e
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    SELECT 'CREATE DATABASE llmwiki_test OWNER $POSTGRES_USER'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'llmwiki_test')\gexec
+    SELECT 'GRANT ALL PRIVILEGES ON DATABASE llmwiki_test TO $POSTGRES_USER'
+    WHERE EXISTS (SELECT FROM pg_database WHERE datname = 'llmwiki_test')\gexec
+EOSQL
+
+# 测试库与主库一样需要 pgvector（否则 test_search_vector 等会跳过或失败）
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "llmwiki_test" \
+    -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+
+echo "[initdb] llmwiki_test 就绪（owner=$POSTGRES_USER，pgvector 已启用）"

@@ -1,0 +1,34 @@
+# 构建上下文排除清单 —— 缩小镜像与构建上下文，并确保敏感内容不进镜像。
+# 改本文件后需重新 build（docker compose build）才生效。
+
+# 密钥与本地备份：绝不进镜像
+.env
+.env.*
+!.env.example
+.local-backup/
+
+# 版本控制与本地工具缓存
+.git/
+.gitignore
+.npm-cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# 前端 Node 产物（Vue 工作台在宿主机运行，镜像不需要）
+frontend/node_modules/
+frontend/dist/
+
+# 知识库内容：运行期通过 volume 挂载，不进镜像
+vault/
+
+# 文档、面试素材与图表（镜像运行不需要）
+docs/
+README.md
+CLAUDE.md
+init.sh
+docker-compose.yml
+
+# 本地产物与日志
+tools/watcher.log
+*.log

@@ -1,3 +1,11 @@
+# 三容器：db（PostgreSQL 16 + pgvector）· api（FastAPI）· streamlit（管理台）
+#
+# 环境变量从仓库根目录的 .env 自动读取（compose 内置行为）；缺省值仅用于本地开发。
+# 生产部署必须显式设置：APP_ENV=production、强随机 JWT_SECRET（≥32 字符）、
+# 非默认 ADMIN_INIT_PASS（≥12 字符），并删除下面的默认值。
+#
+# ⚠️ 容器内【不含 LLM 引擎】：知识层的编译/审核/问答由宿主机的 Claude Code 经
+#    vault/ 触发文件消费，容器只做 API / 管理台 / 数据层。详见 README「LLM 引擎」节。
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -9,6 +17,8 @@ services:
       - "127.0.0.1:5432:5432" # 仅本机开发/测试直连，避免数据库暴露公网
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # 每次启动创建/修复测试库 llmwiki_test（幂等），使 pytest 可在容器内运行
+      - ./docker/initdb/10-test-db:/docker-entrypoint-initdb.d/10-test-db:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U llmwiki -d llmwiki"]
       interval: 5s
@@ -36,6 +46,12 @@ services:
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-please-32bytes}
       - ADMIN_INIT_USER=${ADMIN_INIT_USER:-admin}
       - ADMIN_INIT_PASS=${ADMIN_INIT_PASS:-admin123}
+      # SP4 混合检索：未配置时 /search 自动降级 grep-only（向量通道失效）
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      # SP2.5 可观测性探针（可选；未配置时 tools/langfuse_probe.py 零侵入跳过）
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')\""]
       interval: 10s
@@ -64,6 +80,14 @@ services:
       - API_BASE=http://api:8000
       - APP_ENV=${APP_ENV:-development}
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-please-32bytes}
+      # 管理台侧直接调用 embedding 的路径（如缺口阈值相关工具）同样需要
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8501/_stcore/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
 volumes:

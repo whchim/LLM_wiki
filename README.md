@@ -143,9 +143,30 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 
 > Watcher 需要本机已安装 Claude Code（编译必须由 LLM 引擎执行，这是架构原则）；日志见 `tools/watcher.log`。**运行前置**：Claude Code 的 LLM 通道必须可用（如 `ANTHROPIC_BASE_URL` 指向本地代理服务，需保证该服务已启动——watcher 内置预检，通道不通会在唤起前明确报错而不是白跑几分钟）。安全说明：headless 无人值守默认使用受限的 `acceptEdits` 权限模式；只有显式设置 `WATCHER_PERMISSION_MODE=bypassPermissions` 才会放开权限。对外部署仍应叠加 Claude Code allowedTools 白名单、容器沙箱和最小文件权限。
 
+**环境变量**（从仓库根目录 `.env` 读取，compose 内置行为；`docker compose config` 可校验插值）：
+
+| 变量 | 作用 | 缺省 |
+|---|---|---|
+| `JWT_SECRET` / `ADMIN_INIT_USER` / `ADMIN_INIT_PASS` | 认证与初始管理员 | 仅本地开发默认值 |
+| `DASHSCOPE_API_KEY` | **SP4 向量通道**；未配置时 `/search` 静默降级 grep-only | 空 |
+| `LANGFUSE_*` | SP2.5 可观测性探针（可选，零侵入） | 空 |
+| `APP_ENV` | `production` 时强制强密钥与强密码 | `development` |
+
+> ⚠️ **容器内不含 LLM 引擎**：编译/审核/问答由**宿主机的 Claude Code** 消费 `vault/_triggers/` 完成，容器只提供 API / 管理台 / 数据层。因此 `prompts/`、`workflows/`、`.claude/` 在宿主机运行，不在容器内执行。
+
 **生产部署要求**：设置 `APP_ENV=production`、随机且至少 32 字符的 `JWT_SECRET`，以及至少 12 字符且非 `admin123` 的 `ADMIN_INIT_PASS`；生产环境不要直接暴露 PostgreSQL 5432，应通过反向代理提供 HTTPS 并限制 8000/8501 的公网访问。默认账号和默认密钥仅用于本地开发/demo。
 
-> 跑测试：`docker compose up -d db` 后 `python -m pytest tests -q`（无 PG 时设 `PYTEST_SKIP_NO_DB=1` 跳过）
+**跑测试**（两种都可；`db` 服务每次启动会幂等创建测试库 `llmwiki_test`）：
+
+```bash
+# 宿主机（需 docker compose up -d db）
+python -m pytest tests -q
+
+# 容器内（镜像已含 tests/ 与 pytest）
+docker compose run --rm api pytest tests -q
+```
+
+> 无 PG 时设 `PYTEST_SKIP_NO_DB=1` 跳过数据库相关用例。国内网络构建镜像时 `pip` 已默认走清华源（可用 `--build-arg PIP_INDEX_URL=...` 覆盖）。
 
 ---
 
