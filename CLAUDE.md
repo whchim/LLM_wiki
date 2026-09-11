@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-**两层结构**：底层是 LLM Wiki 知识库平台（基于 LLM Wiki 编译范式 + Google OKF 规范，入库时编译为结构化 Markdown，而非传统 RAG 每次查询重新检索，详见 `docs/WIKI-00_LLM_Wiki_PRD.md`）；上层收敛为**销售客户状态 Agent 生产形态原型**（销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件），配套**销售事实澄清 Agent**（信息不足时先追问而非猜状态）。核心原则：**不让模型直接改客户事实**——Agent 只提建议，`StateEvent` 是事实唯一写入口，`CurrentState` 是可重建投影。当前知识库为空骨架（企业业务内容已脱敏移除），知识层作为背景知识保留。
+**两层结构（定位以 [docs/ARCH-00_项目定位与分层.md](docs/ARCH-00_项目定位与分层.md) 为准）**：
+
+- **知识层（项目主体）**——LLM Wiki 知识平台，基于 Karpathy 编译范式 + Google OKF 规范：入库时把文档编译为结构化 Markdown，而非传统 RAG 每次查询重新检索（详见 `docs/WIKI-00_LLM_Wiki_PRD.md`）。需求唯一来源 WIKI-00。
+- **应用层（垂直落地）**——销售客户状态 Agent 生产形态原型（销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件），配套销售事实澄清 Agent（信息不足时先追问而非猜状态）。需求唯一来源 `docs/SA-01_销售客户状态Agent_业务契约.md`。核心原则：**不让模型直接改客户事实**——Agent 只提建议，`StateEvent` 是事实唯一写入口，`CurrentState` 是可重建投影。
+- 应用层复用知识层的 FastAPI/JWT/审计/PG 地基；**知识层不反向依赖应用层**。当前知识库为空骨架（企业业务内容已脱敏移除），知识层作为背景知识保留。
 
 **当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台）。**pytest 收集 203 个用例** + CI（测试 + Prompt 退化检测）+ LLM 输出契约校验。
 
@@ -16,6 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 文档 | 角色 | 何时读 |
 |------|------|--------|
+| [docs/ARCH-00_项目定位与分层.md](docs/ARCH-00_项目定位与分层.md) | **项目定位唯一来源**：知识层/应用层分层、层级判据、跨层冲突规则、事实边界、对外表述口径 | 对外介绍、写简历/README、或不确定某功能属于哪一层时 |
 | [docs/WIKI-00_LLM_Wiki_PRD.md](docs/WIKI-00_LLM_Wiki_PRD.md) | 知识层需求唯一来源（v1.8） | 知识层需求裁决依据 |
 | [docs/WIKI-01_LLM_Wiki_设计文档.md](docs/WIKI-01_LLM_Wiki_设计文档.md) | Demo 详细设计（v0.1） | Demo 机制溯源：目录结构、SQLite DDL、函数签名、触发机制 |
 | [docs/WIKI-10_LLM_Wiki_Phase2_路线图.md](docs/WIKI-10_LLM_Wiki_Phase2_路线图.md) | Phase 2 主规划（SP1-SP5） | 进入 Phase 2 工作前 |

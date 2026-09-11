@@ -1,13 +1,15 @@
-# 销售客户状态 Agent 生产形态原型
+# LLM Wiki 知识平台（编译范式 + OKF 规范）
 
-> **销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件**。
-> 普通知识库仍作为背景知识层保留，但项目核心已收敛为一个明确边界内可回放的销售客户状态流程。
+> **上传文档 → AI 编译为结构化知识 → 六维审核 → 人工放行 → 混合检索 → 缺口自增长**。
+> 主体是通用的知识编译与治理层；其上落地了一个垂直应用——**销售客户状态 Agent**（见下方"垂直落地案例"节）。
+> 项目对外定位与分层规则以 [`docs/ARCH-00_项目定位与分层.md`](docs/ARCH-00_项目定位与分层.md) 为准。
 
-> 这是生产形态原型，不宣称已经上线企业生产环境。已验证的是人工门禁、事件历史、敏感数值分层、幂等、过期/撤回/更正和 synthetic 回放；真实业务准确率、并发容量和合规仍需试点验证。
+> 本项目是**生产形态原型**，不宣称已经上线企业生产环境。已验证的是人工门禁、事件历史、敏感数值分层、幂等、过期/撤回/更正和 synthetic 回放；真实业务准确率、并发容量和合规仍需试点验证。
 
-[![tests](https://img.shields.io/badge/tests-133%20passed-green)]()
+[![tests](https://img.shields.io/badge/tests-203%20passed-green)]()
 [![status](https://img.shields.io/badge/status-Phase%202%20%E4%B8%BB%E4%BD%93%E5%AE%8C%E6%88%90-brightgreen)]()
 [![phase](https://img.shields.io/badge/phase-SP1%7ESP5%20%E5%B7%B2%E4%BA%A4%E4%BB%98-blue)]()
+
 
 ---
 
@@ -52,11 +54,39 @@
 
 （PlantUML 源图：[architecture.puml](docs/diagrams/architecture.puml)，知识流转闭环：[flow.puml](docs/diagrams/flow.puml)）
 
+> 上图为**知识层（项目主体）**。其上另有一个垂直应用，复用同一套 FastAPI / JWT / 审计 / PostgreSQL 地基，见下方"垂直落地案例"。
+
 **三个关键设计决策**：
 
 1. **Claude Code 掌 LLM，FastAPI 掌数据** — 编译/审核/问答仍由 Claude Code（Bash 直操作 Vault + `_triggers/` 触发文件消费），**不重造 LLM 调用与 Agent 编排**；FastAPI 接管数据访问层（REST API 化上传/审核/搜索/管理 + JWT 认证 + 审计日志），Streamlit 管理台经 API 消费，不再直连数据库写操作。
 2. **PostgreSQL 是缓存，不是权威** — YAML Frontmatter 是规范数据源；任何状态变更双写；不一致时以文件为准；`rebuild_index()` 可从文件全量重建缓存（pgvector 向量列同为可重建缓存，SP4 用）。
 3. **触发文件消息队列** — API/Streamlit 写 `vault/_triggers/compile_*.md`（原子写 tmp+mv）作为异步信号；Claude Code 经 SessionStart hook / `/process-triggers` 消费，实现"管理台/API ↔ LLM 引擎"解耦。
+
+---
+
+## 垂直落地案例：销售客户状态 Agent
+
+
+知识层证明"编译式知识工程可行"，这个应用证明**同一套底座能长出带状态机、审计与权限边界的真实业务应用**。
+
+> **销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件**
+
+- **核心原则**：不让模型直接改客户事实——Agent 只提建议，`StateEvent` 是事实唯一写入口，`CurrentState` 是可重建投影；证据不可覆盖；撤回/更正/过期一律**追加新事件**，不删历史。
+- **领域建模**：7 状态有限状态机（`new_lead`→`contacted`→`need_confirmed`→`solution_eval`→`commercial_negotiation`→`won`/`lost_or_paused`），每状态有最低证据要求与默认有效期，证据不足必须输出 `needs_review`。
+- **澄清优先于猜测**：信息不足时先按事实与追问契约追问，而不是直接给状态建议。
+- **敏感数值分层**：正文只留占位符（`[AMOUNT_REF:nv-001]`），精确值写入独立受限表，授权角色在审计下恢复；Prompt / trace / 日志 / 向量索引中不出现精确金额。
+
+**该应用的事实边界**（不得夸大）：只有 **36 条 synthetic 回放**验证拦截率、契约通过率与 token 估算，**不是真实业务准确率**；真实试点前仍需脱敏业务数据、人工标注集、成本基线与并发/合规验证。
+
+| 设计文档 | 内容 |
+|---|---|
+| [SA-00](docs/SA-00_销售客户状态Agent_改造计划.md) / [SA-01](docs/SA-01_销售客户状态Agent_业务契约.md) | 阶段计划 / **业务契约（销售域需求唯一来源）** |
+| [SA-02](docs/SA-02_销售客户状态Agent_领域模型.md) / [SA-03](docs/SA-03_销售客户状态Agent_生产形态检查清单.md) / [SA-04](docs/SA-04_销售客户状态Agent_合成评测报告.md) | 领域模型 / 生产形态自检 / 合成评测报告 |
+| [SA-10](docs/SA-10_销售事实澄清Agent_迭代计划.md) ~ [SA-15](docs/SA-15_销售事实澄清Agent_Vue3工作台.md) | 澄清 Agent 契约族与 Vue 3 工作台 |
+
+**Vue 3 工作台**（`frontend/`，Vite，`:5173`）覆盖销售澄清、负责人审核与客户状态证据时间线；与 Streamlit 共用同一 FastAPI，不改变后端权限、审计和状态机边界。
+
+---
 
 ### 程序与模型的分工
 
@@ -93,19 +123,7 @@ uvicorn api.main:app --port 8000 &   # 先起 API（需 PostgreSQL 在 5432）
 streamlit run streamlit_app/app.py
 ```
 
-**服务端口**：Streamlit 管理台 `:8501` ｜ FastAPI REST API `:8000`（交互文档 `/docs`）｜ PostgreSQL `:5432`。
-
-### Vue 3 销售工作台（阶段 5）
-
-销售事实澄清 Agent 另提供 Vue 3 + Vite 展示层，覆盖销售澄清、负责人审核和客户状态证据时间线。它与 Streamlit 共用 FastAPI，不改变后端权限、审计和状态机边界：
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-默认打开 `http://localhost:5173`；API 默认使用 `http://localhost:8000`，可通过 `VITE_API_BASE` 覆盖。Vue 工作台的范围与边界见 [`docs/SA-15_销售事实澄清Agent_Vue3工作台.md`](docs/SA-15_销售事实澄清Agent_Vue3工作台.md)。Docker Compose 当前仍启动 Streamlit，Vue 需单独启动。
+**服务端口**：Streamlit 管理台 `:8501` ｜ FastAPI REST API `:8000`（交互文档 `/docs`）｜ PostgreSQL `:5432` ｜ Vue 3 销售工作台 `:5173`（`cd frontend && npm install && npm run dev`，API 默认 `:8000`，可用 `VITE_API_BASE` 覆盖；Docker Compose 当前仍启动 Streamlit，Vue 需单独启动）。
 
 **默认账号**：`admin / admin123`（环境变量 `ADMIN_INIT_USER/ADMIN_INIT_PASS` 可改）。
 
@@ -131,7 +149,7 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 
 ---
 
-## 核心闭环（个人沉淀 → 审核流转 → 企业共享 → 自增长）
+## 知识层核心闭环（个人沉淀 → 审核流转 → 企业共享 → 自增长）
 
 ```
 上传 → 编译（指纹缓存） → 资源直接发布 / 概念进审核 → 六维度审核
@@ -161,47 +179,57 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 
 | 文档 | 内容 |
 |------|------|
-| [`docs/WIKI-00_LLM_Wiki_PRD.md`](docs/WIKI-00_LLM_Wiki_PRD.md) | 需求唯一来源 v1.8：4 类角色 / 6 大模块 / 迭代路线图 / 错误 UX 文案 |
+| [`docs/ARCH-00_项目定位与分层.md`](docs/ARCH-00_项目定位与分层.md) | **项目定位唯一来源**：知识层/应用层分层、判据、跨层冲突规则、事实边界 |
+| [`docs/WIKI-00_LLM_Wiki_PRD.md`](docs/WIKI-00_LLM_Wiki_PRD.md) | 知识层需求唯一来源 v1.8：4 类角色 / 6 大模块 / 迭代路线图 / 错误 UX 文案 |
 | [`docs/WIKI-01_LLM_Wiki_设计文档.md`](docs/WIKI-01_LLM_Wiki_设计文档.md) | Demo 详细设计 v0.1：目录结构 / SQLite DDL / 函数签名 / Agent 契约 / 触发机制 |
 | [`docs/WIKI-10_LLM_Wiki_Phase2_路线图.md`](docs/WIKI-10_LLM_Wiki_Phase2_路线图.md) | Phase 2 主规划：SP1-SP5 拆分 / 排期 / 架构决策 / 退出标准 |
 | [`docs/WIKI-20_Phase2_SP1_数据地基_设计文档.md`](docs/WIKI-20_Phase2_SP1_数据地基_设计文档.md) | SP1 数据地基：PostgreSQL 迁移 + pgvector（已交付）|
 | [`docs/WIKI-30_Phase2_SP2_API与安全_设计文档.md`](docs/WIKI-30_Phase2_SP2_API与安全_设计文档.md) | SP2 API 与安全：FastAPI + JWT + 审计（已交付）|
+| [`docs/WIKI-50_Phase2_SP4_混合检索_设计文档.md`](docs/WIKI-50_Phase2_SP4_混合检索_设计文档.md) | SP4 混合检索：双通道融合 / 缺口判据 τ 标定 / 评测结论与勘误 |
+| [`docs/VAL-01_LLM_输出校验_设计说明.md`](docs/VAL-01_LLM_输出校验_设计说明.md) | LLM 输出契约校验：三组 schema + 门禁进 agent loop + 退化检测 |
+| [`docs/INT-04_竞品对比_WeKnora.md`](docs/INT-04_竞品对比_WeKnora.md) | 与腾讯 WeKnora 的对比与选型决策（结论：不替换，选择性借鉴）|
+| [`docs/SA-01_销售客户状态Agent_业务契约.md`](docs/SA-01_销售客户状态Agent_业务契约.md) | 应用层需求唯一来源：范围边界 / 状态集合 / 状态机 / 验收指标 |
 | [`docs/VAL-03_检索评测_黄金集.md`](docs/VAL-03_检索评测_黄金集.md) | 检索离线评测集（14 条）——**本地面试资产，不进公开仓库** |
 
 - **发现并修正 3 处 PRD 内部不一致**（架构层数、MCP Server 取舍、编译触发机制）
 - **开发范式收敛**：SDD（编译产物/检索，输入输出可形式化）+ TDD（审核确定性规则/数据层/API）；LLM 输出非确定部分明确不做 BDD
-- **133 个 pytest 用例**：DDL 幂等、双写一致性、审核规则边界（中文紧邻漏报/金额阈值）、上传批处理补偿、驳回重提流程、索引重建鲁棒性、JWT 鉴权与越权、审计落库、搜索缺口聚合、启动自愈、pgvector 混合检索与降级、缺口判据、LLM 输出契约校验
+- **203 个 pytest 用例**：DDL 幂等、双写一致性、审核规则边界（中文紧邻漏报/金额阈值）、上传批处理补偿、驳回重提流程、索引重建鲁棒性、JWT 鉴权与越权、审计落库、搜索缺口聚合、启动自愈、pgvector 混合检索与降级、缺口判据、LLM 输出契约校验，以及应用层的状态转移约束、敏感数值分层、合成回放评测
 - **CI（GitHub Actions）**：真实 PG 全量测试 + Prompt 退化检测；检索回归门禁（黄金集）仅本地执行
+- **检索评测结论**：融合 MRR@10=1.00 / Recall@10=0.95，**纯 grep 通道仅 0.22**；缺口检出力 3/3（详见 SP4 设计文档）
+
 
 ---
 
 ## 目录结构
 
 ```
-├── api/                  # FastAPI 后端（main/auth/audit/schemas + routers/）
-├── streamlit_app/        # 管理台（app/upload/review/growth + login/api_client + db/ops/rules）
+├── api/                  # FastAPI 后端（main/auth/audit/schemas + routers/：知识层 + 应用层路由）
+├── streamlit_app/        # 管理台与知识层页面（app/upload/review/growth + login/api_client + db/ops/rules）
+├── frontend/             # Vue 3 销售工作台（Vite，:5173；复用同一 FastAPI）
 ├── vault/                # Obsidian 知识库根目录（Markdown 权威存储）
 │   ├── RAW/              # 原始文档（个人_notes/会议/经验/项目）
 │   ├── pending_review/   # 待审核概念页
 │   ├── NEXUS/            # 编译产物（资源摘要/概念页/研究 + index/log）
 │   └── _triggers/        # 触发文件消息队列（+ done/ 归档）
-├── docs/                 # 文档体系（PRD/设计/实施/Phase2 规划 + diagrams）
-├── workflows/            # 3 个 Agent 编排（compile/review/growth）
-├── prompts/              # 3 个 Agent 系统提示词
-├── tools/                # 迁移/评测/标定/退化检测/输出校验 CLI（migrate_to_pg/eval_search/tune_search/prompt_regression/validate_llm_output）
+├── docs/                 # 文档体系四族：ARCH（定位）/ WIKI（知识层）/ SA（应用层）/ VAL·INT
+├── workflows/            # 4 个 Agent 编排（compile/review/growth/health）
+├── prompts/              # 4 个 Agent 系统提示词（编译/审核/问答/销售澄清）
+├── tools/                # 迁移/评测/标定/退化检测/输出校验 CLI（migrate_to_pg/eval_search/tune_search/prompt_regression/validate_llm_output/eval_sales_state）
 ├── .claude/              # hook + /process-triggers、/ask 命令 + skills/
-├── schema.sql            # PostgreSQL DDL（幂等：7 业务表 + pgvector + users）
+├── schema.sql            # PostgreSQL DDL（幂等：知识层 7 表 + 应用层领域表 + pgvector + users）
 ├── init.sh               # 幂等初始化（目录树 + 建表 + SCHEMA.md）
-└── tests/                # 133 个 pytest 用例（连真实 PostgreSQL 隔离库）
+└── tests/                # 203 个 pytest 用例（连真实 PostgreSQL 隔离库）
 ```
 
 ---
 
-## 演进状态（Phase 2 路线图）
+## 演进状态
+
+### 知识层（Phase 2 路线图）
 
 | 子项目 | 内容 | 状态 |
 |--------|------|------|
-| **SP1 数据地基** | SQLite → PostgreSQL 16 + pgvector，7 表 + users，迁移脚本 | ✅ 已交付（`886b2f6`） |
+| **SP1 数据地基** | SQLite → PostgreSQL 16 + pgvector，知识层 7 表 + users，迁移脚本 | ✅ 已交付（`886b2f6`） |
 | **SP2 API 与安全** | FastAPI REST + JWT 认证 + 审计日志，Streamlit 接入 | ✅ 已交付（`d174fa1`/`2cd5881`） |
 | **SP2.5 可观测性** | 编译过程 Trace + 端点埋点 + 看板页 | ✅ 已交付（`a1b71f5`） |
 | **SP3 增量编译** | 触发 watcher 全自动编译 + compile_tasks 断点续跑 | ✅ 已交付（`4ba4304`/`bbcfae7`） |
@@ -210,6 +238,20 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 | 工程收尾 | CI（测试 + prompt 退化检测）、LLM 输出契约校验（门禁进 loop）、检索评测黄金集 | ✅ 已交付（`8b20649`/`b97c2ce` 等） |
 
 - **Phase 3 规划**：知识图谱（实体/关系抽取）、多租户 RBAC、外部源感知、分布式编译、生产级部署（详见 PRD）
+
+### 应用层（销售客户状态 Agent，阶段 0-5）
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| 阶段 0 | 范围冻结与验收契约（`SA-01` 业务契约、状态集合、风险边界） | ✅ 已确认 |
+| 阶段 1-2 | 领域模型 + 数据层与状态机（幂等键、事件历史、过期/撤回） | ✅ 已交付（`b2b7032`） |
+| 阶段 3 | 事实澄清 Agent（`SA-11` 契约：信息不足先追问） | ✅ 已交付（`33cdd50`） |
+| 阶段 4 | 角色化工作台（销售提交 / 负责人审核） | ✅ 已交付 |
+| 阶段 5 | Vue 3 工作台（澄清 + 审核 + 证据时间线） | ✅ 已交付（`405b4ad`） |
+| 评测 | 36 条 synthetic 回放（拦截率 / 契约通过率 / token 估算） | ✅ 已交付（`docs/SA-04`） |
+
+- **后续规划**：真实脱敏数据试点、人工标注集与成本基线、并发与合规验证（见 `docs/SA-03` 生产形态检查清单）
+
 
 ---
 
