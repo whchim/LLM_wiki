@@ -4,7 +4,7 @@
 **状态**：待评审
 **作者**：何豫东
 **日期**：2026年8月13日
-**上游文档**：LLM_wiki_PRD.md（v1.7）
+**上游文档**：WIKI-00_LLM_Wiki_PRD.md（v1.7）
 
 ---
 
@@ -133,8 +133,8 @@
 ```
 llm-wiki-demo/                      # 项目根目录（Claude Code 工作目录）
 ├── docs/                           # 文档体系（PRD/设计/实施/Phase2 规划）
-│   ├── LLM_wiki_PRD.md             # 需求文档（v1.8）
-│   ├── LLM_wiki_设计文档.md        # 本文档
+│   ├── WIKI-00_LLM_Wiki_PRD.md     # 需求文档（v1.8）
+│   ├── WIKI-01_LLM_Wiki_设计文档.md # 本文档
 │   └── diagrams/                   # 架构图/流程 SVG
 ├── docker-compose.yml              # 三容器：db(postgres) + api(FastAPI) + streamlit
 ├── Dockerfile                      # Streamlit 镜像

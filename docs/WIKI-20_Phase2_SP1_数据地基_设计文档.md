@@ -2,7 +2,7 @@
 
 > **版本**：v0.1 ｜ **日期**：2026-08-19 ｜ **状态**：草案（待评审）
 >
-> **定位**：Phase 2 子项目 SP1 的详细设计（可直接编码）。依据 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md) SP1 子项目；需求冲突时以 [LLM_wiki_PRD.md](LLM_wiki_PRD.md) v1.8 为准。
+> **定位**：Phase 2 子项目 SP1 的详细设计（可直接编码）。依据 [WIKI-10_LLM_Wiki_Phase2_路线图.md](WIKI-10_LLM_Wiki_Phase2_路线图.md) SP1 子项目；需求冲突时以 [WIKI-00_LLM_Wiki_PRD.md](WIKI-00_LLM_Wiki_PRD.md) v1.8 为准。
 >
 > **范围**：SQLite → PostgreSQL 16 + pgvector 的全量迁移 + 数据层改写 + 部署改造。为 Phase 2 后续 SP2-SP5 铺设统一数据底座。
 

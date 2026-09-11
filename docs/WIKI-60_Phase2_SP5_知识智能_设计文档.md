@@ -2,7 +2,7 @@
 
 > **版本**：v0.1 ｜ **日期**：2026-08-28 ｜ **状态**：草案（待评审）
 >
-> **定位**：Phase 2 子项目 SP5 的详细设计。依据 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md) SP5；需求冲突时以 [LLM_wiki_PRD.md](LLM_wiki_PRD.md) v1.8 为准。
+> **定位**：Phase 2 子项目 SP5 的详细设计。依据 [WIKI-10_LLM_Wiki_Phase2_路线图.md](WIKI-10_LLM_Wiki_Phase2_路线图.md) SP5；需求冲突时以 [WIKI-00_LLM_Wiki_PRD.md](WIKI-00_LLM_Wiki_PRD.md) v1.8 为准。
 >
 > **架构边界（路线图风险表钉死）**：SP5 只用 **YAML + 审核流 + Claude 轨**，不碰 API 层——巡检脚本只读 YAML/PG 缓存，产出的建议**一律走既有 pending_review 审核流**，绝不直改 NEXUS。
 
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS health_reports (
 ├── .claude/commands/health-check.md        # 新增：手动入口
 ├── streamlit_app/growth.py       # 🔄 看板加"最近健康周报"卡片（与周报同模式）
 ├── tests/test_health_check.py    # 新增：四类检测 + 周报落库 + 幂等
-└── docs/LLM_wiki_Phase2_SP5_设计文档.md    # 本文档
+└── docs/WIKI-60_Phase2_SP5_知识智能_设计文档.md    # 本文档
 ```
 
 ## 7. 测试计划

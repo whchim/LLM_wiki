@@ -2,7 +2,7 @@
 
 > **版本**：v0.1 ｜ **日期**：2026-08-28 ｜ **状态**：草案（待评审）
 >
-> **定位**：Phase 2 最后一个子项目。依据 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md) SP4；PRD v1.8。
+> **定位**：Phase 2 最后一个子项目。依据 [WIKI-10_LLM_Wiki_Phase2_路线图.md](WIKI-10_LLM_Wiki_Phase2_路线图.md) SP4；PRD v1.8。
 >
 > **D-embedding 已拍板（2026-08-28）**：阿里云 DashScope `text-embedding-v4`（1024 维，OpenAI 兼容接口）。
 
@@ -99,5 +99,5 @@ GET /search?q=<query>&mode=auto
 ## Changelog
 
 - **v0.1.2（2026-09-01）**：v0.1.1 勘误**落地闭环**。① 缺口判据实现：`/search` 加 `gap` 判定（grep 零命中 且 max_sim < τ），τ=0.52 由 `tools/tune_search.py` 标定（缺口样本 max_sim∈[0.360,0.487]、命中样本下限 0.545，分隔无重叠；取中值），向量不可用自动退化旧语义；缺口以 match_count=0 写日志，看板零改动。② 融合权重标定工具 `tools/tune_search.py`（网格扫描）：结论是 14 条黄金集上**权重不敏感**（MRR 全网格 1.00，vector 排序主导），默认 0.5/0.3 保留并抽为常量 W_GREP_DEFAULT/W_VEC_DEFAULT，扩集后重标定。③ 新增 4 个缺口判据测试（高/低相似度、退化、grep 短路）；`eval_search.py` 缺口检出力与线上判据对齐（输出逐条 max_sim）。评测复跑：缺口识别 3/3，MRR@10=1.00 / Recall@10=0.95 不回退。
-- **v0.1.1（2026-09-01）**：新增检索离线评测集 `docs/检索评测_黄金集.md`（14 条：精确 6/语义 5/缺口 3）+ `tools/eval_search.py`（grep/vector/融合三通道对比，MRR@10、Recall@10、缺口检出力）。设计点：直接复用 `search_router` 检索原语、不经 `/search` 端点——评测查询不写 search_logs（不污染知识缺口看板）。为决策 5（融合权重 0.5/0.3）提供第一版离线依据。**完整首跑（PG + DashScope key）**：融合 MRR@10=1.00 / Recall@10=0.95 vs grep 0.22/0.46；语义改写查询 5/5 融合命中（grep 0/5）。**三个发现**：① 语义通道补上 grep 全部盲区；② `_grep` 只匹配正文不匹配文件名，"示例监测产品规格参数"查询漏检；③ **缺口判据被架空**——向量通道对缺口查询 3/3 误报命中，`match_count=0` 判据失效，需改相似度阈值（第 5 节勘误）。
+- **v0.1.1（2026-09-01）**：新增检索离线评测集 `docs/VAL-03_检索评测_黄金集.md`（14 条：精确 6/语义 5/缺口 3）+ `tools/eval_search.py`（grep/vector/融合三通道对比，MRR@10、Recall@10、缺口检出力）。设计点：直接复用 `search_router` 检索原语、不经 `/search` 端点——评测查询不写 search_logs（不污染知识缺口看板）。为决策 5（融合权重 0.5/0.3）提供第一版离线依据。**完整首跑（PG + DashScope key）**：融合 MRR@10=1.00 / Recall@10=0.95 vs grep 0.22/0.46；语义改写查询 5/5 融合命中（grep 0/5）。**三个发现**：① 语义通道补上 grep 全部盲区；② `_grep` 只匹配正文不匹配文件名，"示例监测产品规格参数"查询漏检；③ **缺口判据被架空**——向量通道对缺口查询 3/3 误报命中，`match_count=0` 判据失效，需改相似度阈值（第 5 节勘误）。
 - **v0.1（2026-08-28）**：初稿。D-embedding 拍板阿里云 text-embedding-v4（1024 维，已实测 key 可用、区分度 0.167）；决策：pgvector 同库向量列、向量=可重建缓存、加权融合 0.5/0.3（图谱 Phase 3）、故障降级 grep-only、backfill 幂等补算。

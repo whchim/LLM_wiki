@@ -1,7 +1,9 @@
-# 企业级 LLM Wiki 知识库平台
+# 销售客户状态 Agent 生产形态原型
 
-> **个人沉淀 → 审核流转 → 企业共享** — 基于 LLM Wiki 编译范式 + Google OKF 规范的企业知识流转系统。
-> 入库时把原始文档编译为结构化 Markdown，替代传统 RAG"每次查询重新检索"。
+> **销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件**。
+> 普通知识库仍作为背景知识层保留，但项目核心已收敛为一个明确边界内可回放的销售客户状态流程。
+
+> 这是生产形态原型，不宣称已经上线企业生产环境。已验证的是人工门禁、事件历史、敏感数值分层、幂等、过期/撤回/更正和 synthetic 回放；真实业务准确率、并发容量和合规仍需试点验证。
 
 [![tests](https://img.shields.io/badge/tests-133%20passed-green)]()
 [![status](https://img.shields.io/badge/status-Phase%202%20%E4%B8%BB%E4%BD%93%E5%AE%8C%E6%88%90-brightgreen)]()
@@ -93,6 +95,18 @@ streamlit run streamlit_app/app.py
 
 **服务端口**：Streamlit 管理台 `:8501` ｜ FastAPI REST API `:8000`（交互文档 `/docs`）｜ PostgreSQL `:5432`。
 
+### Vue 3 销售工作台（阶段 5）
+
+销售事实澄清 Agent 另提供 Vue 3 + Vite 展示层，覆盖销售澄清、负责人审核和客户状态证据时间线。它与 Streamlit 共用 FastAPI，不改变后端权限、审计和状态机边界：
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+默认打开 `http://localhost:5173`；API 默认使用 `http://localhost:8000`，可通过 `VITE_API_BASE` 覆盖。Vue 工作台的范围与边界见 [`docs/SA-15_销售事实澄清Agent_Vue3工作台.md`](docs/SA-15_销售事实澄清Agent_Vue3工作台.md)。Docker Compose 当前仍启动 Streamlit，Vue 需单独启动。
+
 **默认账号**：`admin / admin123`（环境变量 `ADMIN_INIT_USER/ADMIN_INIT_PASS` 可改）。
 
 **知识浏览**：用 [Obsidian](https://obsidian.md/) 打开 `vault/` 目录，即可看到编译产物的图谱、wikilink 导航、反向链接。
@@ -109,7 +123,9 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 # 方式 2（手动）：在项目根目录运行 Claude Code，键入 /process-triggers 处理队列
 ```
 
-> Watcher 需要本机已安装 Claude Code（编译必须由 LLM 引擎执行，这是架构原则）；日志见 `tools/watcher.log`。**运行前置**：Claude Code 的 LLM 通道必须可用（如 `ANTHROPIC_BASE_URL` 指向本地代理服务，需保证该服务已启动——watcher 内置预检，通道不通会在唤起前明确报错而不是白跑几分钟）。安全说明：headless 无人值守默认 `--permission-mode bypassPermissions`，个人机可接受；对外部署建议改为 `--allowedTools` 白名单（见 `tools/trigger_watcher.py` 头注）。
+> Watcher 需要本机已安装 Claude Code（编译必须由 LLM 引擎执行，这是架构原则）；日志见 `tools/watcher.log`。**运行前置**：Claude Code 的 LLM 通道必须可用（如 `ANTHROPIC_BASE_URL` 指向本地代理服务，需保证该服务已启动——watcher 内置预检，通道不通会在唤起前明确报错而不是白跑几分钟）。安全说明：headless 无人值守默认使用受限的 `acceptEdits` 权限模式；只有显式设置 `WATCHER_PERMISSION_MODE=bypassPermissions` 才会放开权限。对外部署仍应叠加 Claude Code allowedTools 白名单、容器沙箱和最小文件权限。
+
+**生产部署要求**：设置 `APP_ENV=production`、随机且至少 32 字符的 `JWT_SECRET`，以及至少 12 字符且非 `admin123` 的 `ADMIN_INIT_PASS`；生产环境不要直接暴露 PostgreSQL 5432，应通过反向代理提供 HTTPS 并限制 8000/8501 的公网访问。默认账号和默认密钥仅用于本地开发/demo。
 
 > 跑测试：`docker compose up -d db` 后 `python -m pytest tests -q`（无 PG 时设 `PYTEST_SKIP_NO_DB=1` 跳过）
 
@@ -145,12 +161,12 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 
 | 文档 | 内容 |
 |------|------|
-| [`docs/LLM_wiki_PRD.md`](docs/LLM_wiki_PRD.md) | 需求唯一来源 v1.8：4 类角色 / 6 大模块 / 迭代路线图 / 错误 UX 文案 |
-| [`docs/LLM_wiki_设计文档.md`](docs/LLM_wiki_设计文档.md) | Demo 详细设计 v0.1：目录结构 / SQLite DDL / 函数签名 / Agent 契约 / 触发机制 |
-| [`docs/LLM_wiki_Phase2_路线图.md`](docs/LLM_wiki_Phase2_路线图.md) | Phase 2 主规划：SP1-SP5 拆分 / 排期 / 架构决策 / 退出标准 |
-| [`docs/LLM_wiki_Phase2_SP1_设计文档.md`](docs/LLM_wiki_Phase2_SP1_设计文档.md) | SP1 数据地基：PostgreSQL 迁移 + pgvector（已交付）|
-| [`docs/LLM_wiki_Phase2_SP2_设计文档.md`](docs/LLM_wiki_Phase2_SP2_设计文档.md) | SP2 API 与安全：FastAPI + JWT + 审计（已交付）|
-| [`docs/检索评测_黄金集.md`](docs/检索评测_黄金集.md) | 检索离线评测集（14 条）——**本地面试资产，不进公开仓库** |
+| [`docs/WIKI-00_LLM_Wiki_PRD.md`](docs/WIKI-00_LLM_Wiki_PRD.md) | 需求唯一来源 v1.8：4 类角色 / 6 大模块 / 迭代路线图 / 错误 UX 文案 |
+| [`docs/WIKI-01_LLM_Wiki_设计文档.md`](docs/WIKI-01_LLM_Wiki_设计文档.md) | Demo 详细设计 v0.1：目录结构 / SQLite DDL / 函数签名 / Agent 契约 / 触发机制 |
+| [`docs/WIKI-10_LLM_Wiki_Phase2_路线图.md`](docs/WIKI-10_LLM_Wiki_Phase2_路线图.md) | Phase 2 主规划：SP1-SP5 拆分 / 排期 / 架构决策 / 退出标准 |
+| [`docs/WIKI-20_Phase2_SP1_数据地基_设计文档.md`](docs/WIKI-20_Phase2_SP1_数据地基_设计文档.md) | SP1 数据地基：PostgreSQL 迁移 + pgvector（已交付）|
+| [`docs/WIKI-30_Phase2_SP2_API与安全_设计文档.md`](docs/WIKI-30_Phase2_SP2_API与安全_设计文档.md) | SP2 API 与安全：FastAPI + JWT + 审计（已交付）|
+| [`docs/VAL-03_检索评测_黄金集.md`](docs/VAL-03_检索评测_黄金集.md) | 检索离线评测集（14 条）——**本地面试资产，不进公开仓库** |
 
 - **发现并修正 3 处 PRD 内部不一致**（架构层数、MCP Server 取舍、编译触发机制）
 - **开发范式收敛**：SDD（编译产物/检索，输入输出可形式化）+ TDD（审核确定性规则/数据层/API）；LLM 输出非确定部分明确不做 BDD
@@ -201,3 +217,4 @@ tools\watcher_start.cmd        # 双击启动；或放入 shell:startup 开机�
 
 - [Karpathy · LLM Wiki Gist](https://gist.github.com/karpathy/90f50cd5cbf126f36bde3a39d67d2431) — LLM Wiki 编译范式原始理念
 - **Google OKF（Open Knowledge Format）v0.1** — 知识文件标准化规范（Just Markdown + YAML Frontmatter + Reserved Files + 容错消费），本项目严格对齐
+- [docs/INT-04_竞品对比_WeKnora.md](docs/INT-04_竞品对比_WeKnora.md) — 与腾讯 WeKnora 的对比与迁移决策（结论：不替换，只借鉴解析/检索/图谱抽取的工程做法）

@@ -2,7 +2,7 @@
 
 > **版本**：v0.1 ｜ **日期**：2026-08-28 ｜ **状态**：草案（待评审）
 >
-> **定位**：Phase 2 子项目 SP3 的详细设计。依据 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md) SP3；需求冲突时以 [LLM_wiki_PRD.md](LLM_wiki_PRD.md) v1.8 为准。
+> **定位**：Phase 2 子项目 SP3 的详细设计。依据 [WIKI-10_LLM_Wiki_Phase2_路线图.md](WIKI-10_LLM_Wiki_Phase2_路线图.md) SP3；需求冲突时以 [WIKI-00_LLM_Wiki_PRD.md](WIKI-00_LLM_Wiki_PRD.md) v1.8 为准。
 >
 > **前置已交付**：触发文件 Watcher（`4ba4304`，消费侧自动化——纸条 → headless Claude Code）已上线并通过端到端实战验证。本 SP 在其上补齐"增量编译"的另外两块：**RAW 直放监听** 与 **断点续跑**。
 
@@ -79,7 +79,7 @@
 ├── .claude/commands/process-triggers.md   # 🔄 消费前任务级去重步骤
 ├── workflows/compile_workflow.md          # 🔄 断点续跑规则 + processing 状态 + 跳过输出
 ├── tests/test_watcher_scan.py   # 新增：增量判定（新文件/已 done/failed 重编/纸条合并）
-└── docs/LLM_wiki_Phase2_SP3_设计文档.md   # 本文档
+└── docs/WIKI-40_Phase2_SP3_增量编译_设计文档.md   # 本文档
 ```
 
 ## 7. 测试计划

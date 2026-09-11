@@ -2,7 +2,7 @@
 
 > **版本**：v0.1 ｜ **日期**：2026-08-24 ｜ **状态**：草案（待评审）
 >
-> **定位**：Phase 2 子项目 SP2 的详细设计（可直接编码）。依据 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md) SP2 子项目；需求冲突时以 [LLM_wiki_PRD.md](LLM_wiki_PRD.md) v1.8 为准。
+> **定位**：Phase 2 子项目 SP2 的详细设计（可直接编码）。依据 [WIKI-10_LLM_Wiki_Phase2_路线图.md](WIKI-10_LLM_Wiki_Phase2_路线图.md) SP2 子项目；需求冲突时以 [WIKI-00_LLM_Wiki_PRD.md](WIKI-00_LLM_Wiki_PRD.md) v1.8 为准。
 >
 > **范围**：FastAPI REST API 化（上传/审核/搜索/管理端点）+ JWT 认证（管理员/普通用户）+ 审计日志中间件 + Streamlit 登录接入。
 

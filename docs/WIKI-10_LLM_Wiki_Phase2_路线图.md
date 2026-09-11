@@ -4,7 +4,7 @@
 >
 > **定位**：Phase 2「企业级能力」的总体规划文档——子项目拆分、迭代排期、架构决策、待定决策、退出标准。每个子项目（SP）的详细设计另走「设计文档 → 实施计划」流程，不在本文档展开。
 >
-> **依据**：[LLM_wiki_PRD.md](LLM_wiki_PRD.md) v1.7（需求唯一来源，本文档落地后 PRD 升 v1.8 同步细化）；[LLM_wiki_设计文档.md](LLM_wiki_设计文档.md) v0.1（Demo 设计基线）。
+> **依据**：[WIKI-00_LLM_Wiki_PRD.md](WIKI-00_LLM_Wiki_PRD.md) v1.7（需求唯一来源，本文档落地后 PRD 升 v1.8 同步细化）；[WIKI-01_LLM_Wiki_设计文档.md](WIKI-01_LLM_Wiki_设计文档.md) v0.1（Demo 设计基线）。
 
 ---
 
@@ -123,7 +123,7 @@ SP1 ──┬──→ SP2 ──→ SP3 ──→ SP4
 
 ## 八、文档落地
 
-- 本文档（`docs/LLM_wiki_Phase2_路线图.md`）为 Phase 2 主规划，与 PRD/设计文档/实施计划同放 `docs/` 目录。
+- 本文档（`docs/WIKI-10_LLM_Wiki_Phase2_路线图.md`）为 Phase 2 主规划，与 PRD/设计文档/实施计划同放 `docs/` 目录。
 - PRD 升 v1.8：第七章 Phase 2 表细化到 SP 级，多源同步/React 移入 Phase 3。
 - 后续每个 SP 单独走「设计文档 → 实施计划」流程，首个子项目为 **SP1 数据地基**。
 

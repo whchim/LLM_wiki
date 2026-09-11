@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI、uvicorn、PyJWT、pwdlib[argon2]、Python 3.11+、psycopg3（复用）、Streamlit、pytest + TestClient、Docker Compose。
 
-**Spec:** [LLM_wiki_Phase2_SP2_设计文档.md](LLM_wiki_Phase2_SP2_设计文档.md)（v0.1，本文档实现依据）；范围与需求依 [LLM_wiki_Phase2_路线图.md](LLM_wiki_Phase2_路线图.md)、[LLM_wiki_PRD.md](LLM_wiki_PRD.md) v1.8。
+**Spec:** [WIKI-30_Phase2_SP2_API与安全_设计文档.md](WIKI-30_Phase2_SP2_API与安全_设计文档.md)（v0.1，本文档实现依据）；范围与需求依 [WIKI-10_LLM_Wiki_Phase2_路线图.md](WIKI-10_LLM_Wiki_Phase2_路线图.md)、[WIKI-00_LLM_Wiki_PRD.md](WIKI-00_LLM_Wiki_PRD.md) v1.8。
 
 ## Global Constraints
 

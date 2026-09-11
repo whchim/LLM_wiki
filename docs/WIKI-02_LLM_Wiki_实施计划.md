@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+（Streamlit 容器）、SQLite（WAL）、bash（init.sh/hooks）、Claude Code（Agent + Harness + SessionStart hook）、Obsidian Desktop（用户侧）、Docker Compose。
 
-**Spec:** [LLM_wiki_设计文档.md](LLM_wiki_设计文档.md)（v0.1，本文档的实现依据，执行者需同时阅读；需求冲突时以 [LLM_wiki_PRD.md](LLM_wiki_PRD.md) v1.7 为准）
+**Spec:** [WIKI-01_LLM_Wiki_设计文档.md](WIKI-01_LLM_Wiki_设计文档.md)（v0.1，本文档的实现依据，执行者需同时阅读；需求冲突时以 [WIKI-00_LLM_Wiki_PRD.md](WIKI-00_LLM_Wiki_PRD.md) v1.7 为准）
 
 ## Global Constraints
 
