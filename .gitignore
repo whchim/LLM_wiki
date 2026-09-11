@@ -28,8 +28,15 @@ Thumbs.db
 vault/documents/
 
 # 个人简历/面试素材（不公开）
-项目经历_LLM_Wiki.md
-项目经历_面试踩坑故事集.md
-提交历史_面试对照表.md
-检索评测_黄金集.md
-docs/评估_概念页质量标注表.md
+docs/INT-01_项目经历_LLM_Wiki.md
+docs/INT-02_项目经历_面试踩坑故事集.md
+docs/INT-03_提交历史_面试对照表.md
+docs/VAL-02_评估_概念页质量标注表.md
+docs/VAL-03_检索评测_黄金集.md
+
+# Vue 3 前端构建产物
+frontend/node_modules/
+frontend/dist/
+
+# npm 本地缓存目录（不进仓库）
+.npm-cache/
