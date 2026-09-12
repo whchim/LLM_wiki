@@ -20,7 +20,12 @@ MAX_SUBMITTED_BY_CHARS = 128
 FUTURE_SKEW = timedelta(minutes=15)
 
 SOURCE_TYPES = {"meeting_note", "transcript", "chat_summary"}
+# 客户标识是"代号"不是"客户信息"：必须稳定（同一客户每次同 id，否则状态机会拆成多个客户），
+# 且不得是可定位到具体人/机构的明文。格式限 ASCII 字母数字与 - _ . :，首字符须为字母或数字。
 CUSTOMER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+# 提示与校验共用同一份描述，避免"文档说能用、代码却不允许"的漂移（测试会校验示例合法）
+CUSTOMER_ID_FORMAT_HINT = "只能用字母、数字和 - _ . :（不能用中文、空格、@），且首字符须为字母或数字"
+CUSTOMER_ID_EXAMPLES = ("customer-001", "cust_2026_01")
 
 # 这些模式只做明显的指令混入拦截，不试图判断普通业务文本是否“可信”。
 INJECTION_PATTERNS = (
@@ -119,10 +124,19 @@ def preprocess_sales_input(payload: Mapping[str, Any], *, now: datetime | None =
     source_type = payload.get("source_type")
     if not key or len(key) > MAX_IDEMPOTENCY_KEY_CHARS or any(ord(ch) < 32 for ch in key):
         errors.append("idempotency_key 为空、过长或包含控制字符")
-    if not customer_id or len(customer_id) > MAX_CUSTOMER_ID_CHARS or not CUSTOMER_ID_RE.fullmatch(customer_id):
-        errors.append("customer_id 必须是稳定脱敏标识，不得包含明文敏感信息")
+    # 空 / 超长 / 字符非法 / 内容敏感 分四种提示：
+    # 原来四种共用一个文案，用户填中文或公司名时完全不知道问题出在哪。
+    if not customer_id:
+        errors.append("customer_id 必填：请填写该客户的稳定脱敏标识")
+    elif len(customer_id) > MAX_CUSTOMER_ID_CHARS:
+        errors.append(f"customer_id 过长（{len(customer_id)} 字符，上限 {MAX_CUSTOMER_ID_CHARS}）")
+    elif not CUSTOMER_ID_RE.fullmatch(customer_id):
+        errors.append(
+            f"customer_id 格式非法：{CUSTOMER_ID_FORMAT_HINT}。"
+            f"当前值 {customer_id[:40]!r}（含中文客户名请改用代号，"
+            f"示例：{CUSTOMER_ID_EXAMPLES[0]}）")
     elif rules.check_sensitive(customer_id) != "pass":
-        errors.append("customer_id 疑似包含未脱敏敏感信息")
+        errors.append("customer_id 疑似包含未脱敏敏感信息（如手机号、身份证号），请改用代号")
     if not submitted_by or len(submitted_by) > MAX_SUBMITTED_BY_CHARS:
         errors.append("submitted_by 为空或过长")
     if source_type not in SOURCE_TYPES:

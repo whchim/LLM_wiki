@@ -23,6 +23,19 @@ function nowLocal() {
 }
 const uid = () => globalThis.crypto?.randomUUID?.() || `k-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
 
+/**
+ * 生成客户代号：`cust-YYYYMMDD-xxxx`。
+ * 刻意**不从客户中文名派生**（拼音/缩写同样会泄露客户身份），只给中性代号。
+ * ⚠️ 同一客户必须长期复用同一个代号，否则状态机（按 customer_id 聚合）会把一次跟进
+ * 拆成多个客户，历史就断了——所以生成后要记下来。
+ */
+function generateCustomerId() {
+  const d = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+  form.value.customer_id = `cust-${stamp}-${uid().replace(/-/g, '').slice(0, 4)}`
+}
+
 function guessCustomerId(filename) {
   const base = filename.replace(/\.[^.]+$/, '').replace(/^\d{4}[-_]?\d{2}[-_]?\d{2}[-_\s]*/, '').trim()
   return base.replace(/[^\w\u4e00-\u9fa5-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
@@ -178,8 +191,18 @@ onMounted(load)
           <el-form label-position="top">
             <el-row :gutter="12">
               <el-col :span="12">
-                <el-form-item label="客户脱敏标识">
-                  <el-input v-model="form.customer_id" placeholder="customer-demo-001" />
+                <el-form-item>
+                  <template #label>
+                    <div class="label-row">
+                      <span>客户脱敏标识</span>
+                      <el-button size="small" text type="primary" @click="generateCustomerId">生成代号</el-button>
+                    </div>
+                  </template>
+                  <el-input v-model="form.customer_id" placeholder="cust-20260912-a3f7" />
+                  <div class="field-hint">
+                    用代号，不要填客户真实名称：同一客户长期复用同一个代号（状态按它聚合），
+                    只能用字母、数字和 <code>- _ . :</code>，首字符须为字母或数字。
+                  </div>
                 </el-form-item>
               </el-col>
               <el-col :span="12">
@@ -309,6 +332,8 @@ onMounted(load)
 .mb { margin-bottom: 12px; }
 .full { width: 100%; }
 .label-row { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.field-hint { margin-top: 6px; color: var(--c-text-dim); font-size: 12px; line-height: 1.7; }
+.field-hint code { padding: 1px 4px; border-radius: 4px; background: var(--c-neutral-badge-bg); font-size: 11px; }
 .hidden-file { display: none; }
 .file-chip { display: inline-flex; align-items: center; gap: 6px; }
 .card-head { display: flex; align-items: center; gap: 10px; }
