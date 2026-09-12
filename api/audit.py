@@ -19,6 +19,8 @@ ACTIONS = {
     "backfill_embeddings",
     "customer_state_decision", "customer_state_withdraw", "customer_state_correction",
     "customer_state_expire",
+    # 销售事实澄清链路（应用层）——此前缺失导致这些审计被静默丢弃
+    "sales_intake", "clarification_session_create", "clarification_answer",
 }
 
 

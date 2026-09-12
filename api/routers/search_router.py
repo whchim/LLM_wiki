@@ -187,3 +187,98 @@ def entries(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0, 
             "SELECT COUNT(*) FROM knowledge_entries").fetchone()[0]
     keys = ["path", "type", "title", "department", "status", "version", "updated_at"]
     return {"total": total, "items": [dict(zip(keys, r)) for r in rows]}
+
+
+@router.get("/entries/mine")
+def my_entries(limit: int = Query(200, ge=1, le=1000),
+               user: auth.User = Depends(auth.get_current_user)) -> dict:
+    """我的知识库：按流转阶段追溯"我提交了什么、现在到哪一步"。
+
+    只读、无新表——归属从 audit_logs 的 upload 事件追溯（operator=当前用户），
+    再按 raw_path 左连 compile_tasks（编译）→ knowledge_entries（是否已入库）、
+    pending_reviews（审核结论）。
+
+    ⚠️ 已知边界：knowledge_entries 目前没有归属字段，所以这里的"我的"指
+    "我上传过的"，而不是"归我所有的"；条目一旦发布，无法反查作者。
+    """
+    with db.get_conn() as conn:
+        # 1) 当前用户上传过哪些 RAW 路径（target_path 为逗号拼接，截断风险可接受）
+        rows = conn.execute(
+            "SELECT target_path AS raw_path, MAX(timestamp) AS uploaded_at "
+            "FROM audit_logs WHERE operator=%s AND action='upload' "
+            "GROUP BY target_path ORDER BY MAX(timestamp) DESC LIMIT %s",
+            (user.username, limit)).fetchall()
+        raw_paths: list[tuple[str, object]] = []
+        for raw_path, uploaded_at in rows:
+            for p in str(raw_path or "").split(","):
+                p = p.strip()
+                if p:
+                    raw_paths.append((p, uploaded_at))
+        if not raw_paths:
+            return {"items": [], "counts": {}, "owner_field": False}
+
+        paths = [p for p, _ in raw_paths]
+        # 2) 编译任务：同一 raw_path 可能多次编译，只取最近一次
+        task_rows = conn.execute(
+            "SELECT DISTINCT ON (raw_path) raw_path, status, nexus_path, error_msg, completed_at "
+            "FROM compile_tasks WHERE raw_path = ANY(%s) "
+            "ORDER BY raw_path, id DESC", (paths,)).fetchall()
+        tasks = {r[0]: r for r in task_rows}
+        # 3) 已入库？用 basename 匹配（审核会把路径从 pending_review/ 移到 NEXUS/）
+        name_rows = conn.execute(
+            "SELECT path, title, type, status, version, updated_at, "
+            "       split_part(path, '/', -1) AS name FROM knowledge_entries").fetchall()
+        by_name = {r[6]: r for r in name_rows}
+        # 4) 审核结论（按 basename 关联）
+        review_rows = conn.execute(
+            "SELECT split_part(nexus_path, '/', -1) AS name, submitter, ai_verdict, "
+            "       human_decision, reject_reason FROM pending_reviews").fetchall()
+        reviews: dict[str, list] = {}
+        for r in review_rows:
+            reviews.setdefault(r[0], []).append(r)
+
+    items = []
+    for raw_path, uploaded_at in raw_paths:
+        name = raw_path.split("/")[-1]
+        task = tasks.get(raw_path)
+        entry = by_name.get(name)
+        revs = reviews.get(name) or []
+        human = next((r[3] for r in revs if r[3]), None)
+        reject_reason = next((r[4] for r in revs if r[4]), None)
+
+        if human == "approved" or (entry is not None and entry[3] == "active"):
+            stage = "已发布"
+        elif human == "rejected":
+            stage = "已驳回"
+        elif task is not None and task[1] == "failed":
+            stage = "编译失败"
+        elif task is not None and task[1] in ("pending", "processing"):
+            stage = "编译中"
+        elif revs or (entry is not None and entry[3] == "pending"):
+            stage = "待审核"
+        elif task is not None and task[1] == "done":
+            stage = "已编译"
+        else:
+            stage = "已上传"
+
+        items.append({
+            "raw_name": name,
+            "raw_path": raw_path,
+            "uploaded_at": uploaded_at,
+            "stage": stage,
+            "compile_status": task[1] if task else None,
+            "compile_error": task[3] if task else None,
+            "nexus_path": task[2] if task else None,
+            "entry_path": entry[0] if entry else None,
+            "entry_title": entry[1] if entry else None,
+            "entry_type": entry[2] if entry else None,
+            "entry_version": entry[4] if entry else None,
+            "entry_updated_at": entry[5] if entry else None,
+            "review_decision": human,
+            "reject_reason": reject_reason,
+        })
+
+    counts: dict[str, int] = {}
+    for it in items:
+        counts[it["stage"]] = counts.get(it["stage"], 0) + 1
+    return {"items": items, "counts": counts, "owner_field": False}

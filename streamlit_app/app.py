@@ -57,17 +57,19 @@ with st.sidebar:
     st.divider()
 
     # 导航（按角色收敛可见页面）
-    pages = ["上传文档", "销售澄清"]
+    pages = ["我的知识库", "上传文档", "销售澄清"]
     if auth["role"] in ("admin", "reviewer"):
-        pages.insert(1, "审核管理")
-        pages.insert(2, "销售客户状态")
-        pages.insert(3, "澄清审核")
+        pages.insert(2, "审核管理")
+        pages.insert(3, "销售客户状态")
+        pages.insert(4, "澄清审核")
     pages.extend(["自增长看板", "可观测性"])
     page = st.radio("导航", pages)
 
 # ---- 路由 ----
-import upload, review, growth, obs, customer_state_page, sales_clarification_page, clarification_review_page
-if page == "上传文档":
+import upload, review, growth, obs, customer_state_page, sales_clarification_page, clarification_review_page, my_kb_page
+if page == "我的知识库":
+    my_kb_page.render()
+elif page == "上传文档":
     if auth["role"] in ("admin", "reviewer", "user"):
         upload.render()
     else:

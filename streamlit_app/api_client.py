@@ -125,6 +125,10 @@ class ApiClient:
     def entries(self) -> dict:
         return self._request("GET", "/entries")
 
+    def my_entries(self, limit: int = 200) -> dict:
+        """我的知识库：按流转阶段追溯自己提交过的内容。"""
+        return self._request("GET", "/entries/mine", params={"limit": limit})
+
     def rebuild_index(self) -> dict:
         return self._request("POST", "/admin/rebuild-index")
 
