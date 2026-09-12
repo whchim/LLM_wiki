@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol
 
-from clarification_schema import parse_clarification_output, validate_clarification_output
+from clarification_schema import locate_quote, parse_clarification_output, validate_clarification_output
 
 PROMPT_VERSION = "sales-clarification-v1"
 DEFAULT_MAX_RETRIES = 1
@@ -85,6 +85,7 @@ def build_user_prompt(
     current_state: str | None,
     prior_claims: list[Mapping[str, Any]] | None = None,
     answer_contents: Mapping[str, str] | None = None,
+    allowed_sources: list[str] | None = None,
 ) -> str:
     """构造最小脱敏上下文；不接受精确敏感数值或原始客户身份。"""
     if not isinstance(content_redacted, str) or not content_redacted.strip():
@@ -95,14 +96,64 @@ def build_user_prompt(
         raise ValueError("customer_id 不能为空")
     claims_json = json.dumps(prior_claims or [], ensure_ascii=False, separators=(",", ":"))
     answers_json = json.dumps(answer_contents or {}, ensure_ascii=False, separators=(",", ":"))
+    sources = allowed_sources or ["initial_note", *(answer_contents or {})]
     return (
         f"customer_id={customer_id.strip()}\n"
         f"current_state={current_state or 'none'}\n"
         f"initial_note={content_redacted}\n"
         f"prior_claims={claims_json}\n"
         f"clarification_answers={answers_json}\n"
+        f"allowed_evidence_sources={json.dumps(sources, ensure_ascii=False)}\n"
         "请严格按 system prompt 输出 JSON，不要输出 Markdown。"
+        "证据的 source 只能取 allowed_evidence_sources 中的值。"
     )
+
+
+def normalize_evidence_offsets(parsed: dict, contents: Mapping[str, str]) -> dict:
+    """规范化证据：来源别名纠正 + 服务端定位 start/end。
+
+    两件事都因为"不该指望模型做这些"：
+    1. **来源别名**：契约要求 source 取 `initial_note` 或问题 ID（如 question-1），
+       但模型常按顺序写成 `answer-1`/`answer_1`/`a1`。若该别名能唯一对应到某条已回答
+       问题的文本，就改写为真实 question_id；否则交由契约报错（不静默放行）。
+    2. **偏移**：模型只需给 source + quote，start/end 由服务端定位计算。
+    就地修改并返回 parsed。
+    """
+    claims = parsed.get("claims")
+    if not isinstance(claims, list):
+        return parsed
+    # 别名 → 真实 key：先按内容反查，再按出现顺序编号
+    answer_keys = [k for k in contents if k != "initial_note"]
+    text_to_key = {contents[k]: k for k in answer_keys}
+    alias_map: dict[str, str] = {}
+    for idx, key in enumerate(answer_keys, start=1):
+        for alias in (f"answer-{idx}", f"answer_{idx}", f"a{idx}", f"answer{idx}"):
+            alias_map[alias] = key
+
+    for claim in claims:
+        if not isinstance(claim, Mapping):
+            continue
+        evidence = claim.get("evidence")
+        if not isinstance(evidence, list):
+            continue
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            source = item.get("source")
+            if isinstance(source, str) and source not in contents:
+                # 先尝试按文本内容反查（最稳），再按别名编号
+                quote = item.get("quote")
+                matched = text_to_key.get(quote) if isinstance(quote, str) else None
+                item["source"] = matched or alias_map.get(source.strip().lower(), source)
+            text = contents.get(str(item.get("source", "initial_note")))
+            quote = item.get("quote")
+            if not isinstance(text, str) or not isinstance(quote, str):
+                continue
+            located = locate_quote(text, quote)
+            if located is None:
+                continue
+            item["start"], item["end"] = located
+    return parsed
 
 
 def run_clarification_agent(
@@ -113,6 +164,7 @@ def run_clarification_agent(
     current_state: str | None = None,
     prior_claims: list[Mapping[str, Any]] | None = None,
     answer_contents: Mapping[str, str] | None = None,
+    allowed_sources: list[str] | None = None,
     system_prompt: str,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_retries: int = DEFAULT_MAX_RETRIES,
@@ -129,6 +181,7 @@ def run_clarification_agent(
         current_state=current_state,
         prior_claims=prior_claims,
         answer_contents=answer_contents,
+        allowed_sources=allowed_sources,
     )
     result = ClarificationRun(status="failed", output=None, errors=[])
     for attempt_number in range(1, max_retries + 2):
@@ -142,6 +195,11 @@ def run_clarification_agent(
             parsed = parse_clarification_output(response.raw_text)
             parsed.setdefault("model_version", response.model_version)
             parsed.setdefault("prompt_version", PROMPT_VERSION)
+            # 偏移以服务端定位为准（模型只给 quote），保证落库结果与脱敏原文一致
+            normalize_evidence_offsets(parsed, {
+                "initial_note": content_redacted,
+                **{str(k): v for k, v in (answer_contents or {}).items() if isinstance(v, str)},
+            })
             errors = validate_clarification_output(
                 parsed, content_redacted=content_redacted, current_state=current_state,
                 answer_contents=answer_contents)

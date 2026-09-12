@@ -69,6 +69,22 @@ def _unique_ids(items: Any, field: str, errors: list[str]) -> set[str]:
     return ids
 
 
+def locate_quote(text: str, quote: str) -> tuple[int, int] | None:
+    """在可引用内容中定位片段，返回 (start, end)；找不到返回 None。
+
+    偏移由**服务端**计算，而不是让模型数——模型不擅长精确字符定位（尤其中文），
+    通用模型的字符级偏移一致率很低，把这件事交给模型只会稳定地产生契约违例。
+    模型只需保证 quote 是原文的**连续片段**，定位交给这里。
+    同一片段出现多次时取首次出现（证据只需可核验，不要求唯一）。
+    """
+    if not isinstance(text, str) or not isinstance(quote, str) or not quote:
+        return None
+    index = text.find(quote)
+    if index < 0:
+        return None
+    return index, index + len(quote)
+
+
 def _validate_evidence(
     evidence: Any,
     *,
@@ -89,22 +105,22 @@ def _validate_evidence(
             errors.append(f"{prefix}.source 不在可引用内容范围内")
             continue
         quote = item.get("quote")
-        start = item.get("start")
-        end = item.get("end")
         if not isinstance(quote, str) or not quote.strip():
             errors.append(f"{prefix}.quote 必须是非空字符串")
-        if (
-            not isinstance(start, int)
-            or isinstance(start, bool)
-            or not isinstance(end, int)
-            or isinstance(end, bool)
-            or start < 0
-            or end <= start
-            or end > len(contents[source])
-        ):
-            errors.append(f"{prefix} 的 start/end 越界或非法")
-        elif isinstance(quote, str) and contents[source][start:end] != quote:
+            continue
+        # 以服务端定位为准：模型给的 start/end 仅作参考，不参与判定
+        located = locate_quote(contents[source], quote)
+        if located is None:
             errors.append(f"{prefix} 无法精确定位到脱敏原文")
+            continue
+        start, end = item.get("start"), item.get("end")
+        if start is not None or end is not None:
+            if (not isinstance(start, int) or isinstance(start, bool)
+                    or not isinstance(end, int) or isinstance(end, bool)):
+                errors.append(f"{prefix} 的 start/end 必须为整数（可省略，由服务端计算）")
+            elif (start, end) != located:
+                # 定位成功但与模型所给偏移不一致：以服务端为准并提示，不算违例
+                errors.append(f"{prefix} 的 start/end 与原文不一致（服务端定位为 {located}）")
 
 
 def validate_clarification_output(

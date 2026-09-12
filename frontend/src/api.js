@@ -71,7 +71,9 @@ export const api = {
   intake: (body) => request('/clarifications/intake', { method: 'POST', body: JSON.stringify(body) }),
   mine: () => request('/clarifications/mine'),
   sessions: () => request('/clarifications/sessions'),
-  session: (id) => request(`/clarifications/sessions/${id}`),
+  // advance=true：会话为 open 时先推进一轮（调模型）再返回，工作台无需额外调用
+  session: (id, advance = false) => request(`/clarifications/sessions/${id}${advance ? '?advance=true' : ''}`),
+  advanceSession: (id) => request(`/clarifications/sessions/${id}/advance`, { method: 'POST' }),
   answer: (id, body) => request(`/clarifications/sessions/${id}/answers`, { method: 'POST', body: JSON.stringify(body) }),
 
   // ---- 销售域：客户状态 ----
@@ -103,6 +105,9 @@ export const STATE_LABELS = {
 export const SESSION_STATUS_LABELS = {
   open: '等待澄清', needs_human_review: '转人工审核', ready_for_proposal: '可生成建议',
   completed: '已完成', cancelled: '已取消',
+  // 轮次（turn）状态词表与会话不同，展示时统一到同一套中文
+  needs_clarification: '等待澄清', human_review: '转人工审核',
+  insufficient_evidence: '证据不足',
 }
 export const ROLE_LABELS = { admin: '管理员', reviewer: '审核者', user: '普通用户' }
 export const ENTRY_TYPE_LABELS = { concept: '概念', resource: '资源', research: '研究', glossary: '术语' }

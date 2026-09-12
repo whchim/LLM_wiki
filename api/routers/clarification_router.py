@@ -9,6 +9,8 @@ from api.schemas import ClarificationAnswerRequest, ClarificationSessionRequest,
 
 import customer_state
 import sales_preprocess
+import clarification_service
+import model_port
 
 router = APIRouter(prefix="/clarifications", tags=["clarification"])
 
@@ -87,13 +89,54 @@ def create_session(body: ClarificationSessionRequest, request: Request,
 
 
 @router.get("/sessions/{session_id}", response_model=dict)
-def get_session(session_id: str, user: auth.User = Depends(auth.get_current_user)):
+def get_session(session_id: str, advance: bool = False,
+                user: auth.User = Depends(auth.get_current_user)):
+    """读取澄清会话。
+
+    advance=true 且会话为 open 时，先推进一轮（调模型 → 契约校验 → 落轮次）再返回，
+    使销售工作台无需额外调用即可看到首轮追问。模型/契约失败不会让请求失败：
+    结果落为 human_review 轮次并在响应中体现，避免前端因 5xx 反复重试造成重复计费。
+    """
     if not _allowed(user, session_id):
         raise HTTPException(status_code=403, detail="无权访问该澄清会话")
+    if advance:
+        _advance_quietly(session_id, user.username)
     result = db.get_clarification_session(session_id)
     if result is None:
         raise HTTPException(status_code=404, detail="澄清会话不存在")
     return result
+
+
+def _advance_quietly(session_id: str, username: str) -> dict | None:
+    """推进一轮；任何异常都吞掉并返回 None（失败原因已落 human_review 轮次，前端可读）。"""
+    port = model_port.default_port()
+    if port is None:
+        return None
+    try:
+        outcome = clarification_service.advance_session(session_id, port)
+    except Exception as exc:  # 模型不可用 / 会话已关闭 / 上下文缺失
+        audit_log(username, "clarification_advance", target_path=session_id,
+                  detail={"error": f"{type(exc).__name__}: {exc}"[:300]})
+        return None
+    if outcome.get("advanced"):
+        audit_log(username, "clarification_advance", target_path=session_id,
+                  detail={"status": outcome.get("status"), "claims": outcome.get("claims"),
+                          "questions": len(outcome.get("questions") or []),
+                          "tokens": outcome.get("audit", {}).get("output_tokens")})
+    return outcome
+
+
+@router.post("/sessions/{session_id}/advance", response_model=dict)
+def advance(session_id: str, user: auth.User = Depends(auth.get_current_user)):
+    """显式推进一轮澄清（与 GET ?advance=true 等价，便于前端在提交回答后主动触发）。"""
+    if not _allowed(user, session_id):
+        raise HTTPException(status_code=403, detail="无权推进该澄清会话")
+    if not model_port.is_available():
+        raise HTTPException(status_code=503, detail="未配置模型（MODEL_API_KEY / DASHSCOPE_API_KEY），无法推进澄清")
+    outcome = _advance_quietly(session_id, user.username)
+    if outcome is None:
+        raise HTTPException(status_code=502, detail="模型或契约失败，已转人工；详情见会话轮次")
+    return outcome
 
 
 @router.get("/mine", response_model=list[dict])
@@ -117,6 +160,8 @@ def answer(session_id: str, body: ClarificationAnswerRequest, request: Request,
     audit_log(user.username, "clarification_answer", target_path=session_id,
               detail={"turn_id": body.turn_id, "question_id": body.question_id})
     request.state.trace_detail = {"operation": "clarification_answer", "session_id": session_id, "turn_id": body.turn_id}
+    # 回答后立即推进下一轮：销售下一次打开会话就能看到新追问（或转人工）
+    result["advance"] = _advance_quietly(session_id, user.username)
     return result
 
 

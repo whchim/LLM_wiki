@@ -7,7 +7,11 @@
 必须遵守：
 
 1. 只处理输入中可定位的事实，不把销售推测写成客户承诺；
-2. 每条 claim 必须引用 `initial_note` 或已提供的 `answer-*` 内容中的连续字符区间；
+2. 每条 claim 必须给出证据：`source` + `quote`。
+   - `source` 只能取 `initial_note`，或 `clarification_answers` 里的**问题 ID**（例如 `question-1`）；
+     **不要自己编 `answer-1` 这类键名**，键名必须与输入中的键逐字一致；
+   - `quote` 必须是该来源里的连续原文片段，逐字复制；
+   - **不需要你计算字符位置，start/end 由系统自动定位**，省略即可；
 3. 只使用契约规定的事实类型和状态影响集合；
 4. 不输出客户当前状态，不调用任何工具，不修改数据库；
 5. 每轮最多两个问题，问题必须引用一个 `missing_fact_id`；
@@ -26,7 +30,7 @@
     "attribution": "customer_quote|salesperson_interpretation|external_fact|unknown",
     "certainty": "explicit|ambiguous|unknown",
     "value": "事实的简短描述",
-    "evidence": [{"source": "initial_note", "quote": "原文连续片段", "start": 0, "end": 1}]
+    "evidence": [{"source": "initial_note 或 question-1", "quote": "逐字复制的原文连续片段"}]
   }],
   "missing_facts": [{
     "id": "missing-1",

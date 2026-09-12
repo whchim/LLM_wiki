@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, Refresh, Upload } from '@element-plus/icons-vue'
 import { api, ApiError, SESSION_STATUS_LABELS } from '../api'
-
 const loading = ref(false)
 const sessions = ref([])
 const selected = ref(null)
@@ -47,7 +46,9 @@ async function load() {
 
 async function openSession(row) {
   try {
-    selected.value = await api.session(row.session_id)
+    // advance=true：会话为 open 时让后端跑一轮 agent，首次打开即可看到追问
+    selected.value = await api.session(row.session_id, true)
+    await load()
   } catch (err) {
     ElMessage.error(err instanceof ApiError ? err.message : '加载会话详情失败')
   }
@@ -116,12 +117,17 @@ async function sendAnswer(turn, question) {
   const value = (drafts.value[question.id] || '').trim()
   if (!value) return
   try {
-    await api.answer(selected.value.session_id, {
+    const res = await api.answer(selected.value.session_id, {
       turn_id: turn.turn_id, question_id: question.id, answer_text_redacted: value,
     })
     drafts.value[question.id] = ''
-    ElMessage.success('回答已追加保存')
+    // 回答后后端已自动推进一轮：可能产生新追问，也可能转人工
+    const adv = res?.advance
+    if (adv?.advanced && adv.status === 'needs_clarification') ElMessage.success('回答已保存，Agent 提出了新的追问')
+    else if (adv?.advanced) ElMessage.info('回答已保存；本会话已转人工审核')
+    else ElMessage.success('回答已追加保存')
     selected.value = await api.session(selected.value.session_id)
+    await load()
   } catch (err) {
     ElMessage.error(err instanceof ApiError ? err.message : '保存回答失败')
   }
@@ -131,6 +137,24 @@ const statusTag = (s) => ({
   open: 'warning', needs_human_review: 'danger', ready_for_proposal: 'success',
   completed: 'info', cancelled: 'info',
 }[s] || 'info')
+
+/** 一轮里的追问（结构：turn.agent_output.questions） */
+const questionsOf = (turn) => (turn?.agent_output?.questions) || []
+/** 某问题是否已答（从会话的 answers 里按 question_id 找） */
+const answerOf = (questionId) => {
+  const hit = (selected.value?.answers || []).find((a) => a.question_id === questionId)
+  return hit?.answer_text_redacted || ''
+}
+/** 无追问时的说明文案 */
+function turnNote(turn) {
+  const out = turn?.agent_output || {}
+  if (turn?.status === 'human_review' || turn?.status === 'needs_human_review') {
+    return `已转人工审核：${(out.error || []).join('；') || '模型或契约未通过'}`
+  }
+  if (out.stop_reason === 'ready_for_proposal') return '事实已足够，可进入状态建议（需负责人确认）'
+  if (out.stop_reason === 'insufficient_evidence') return '证据不足，未能提出可执行的追问'
+  return `本轮无追问（stop_reason=${out.stop_reason || '未知'}）`
+}
 
 const openCount = computed(() => sessions.value.filter((s) => s.status === 'open').length)
 
@@ -250,21 +274,30 @@ onMounted(load)
           </template>
 
           <div v-for="turn in selected.turns || []" :key="turn.turn_id" class="turn">
-            <div class="turn-head">第 {{ turn.turn_no }} 轮</div>
-            <div v-for="q in turn.questions || []" :key="q.id" class="question">
-              <p class="q-text">{{ q.text || q.question }}</p>
-              <div v-if="q.answer_text || q.answered" class="answered">
-                已答：{{ q.answer_text || '（已记录）' }}
-              </div>
+            <div class="turn-head">
+              第 {{ turn.turn_no }} 轮
+              <el-tag size="small" :type="turn.status === 'needs_clarification' ? 'warning' : 'info'" class="turn-tag">
+                {{ SESSION_STATUS_LABELS[turn.status] || turn.status }}
+              </el-tag>
+              <span v-if="turn.input_tokens" class="muted">tokens {{ turn.input_tokens }}/{{ turn.output_tokens }} · {{ turn.latency_ms }}ms</span>
+            </div>
+            <!-- 结构：turn.agent_output.questions（由澄清 Agent 写入，见 SA-13） -->
+            <div v-for="q in questionsOf(turn)" :key="q.id" class="question">
+              <p class="q-text">
+                {{ q.question }}
+                <span class="q-type">{{ q.answer_type }}</span>
+              </p>
+              <div v-if="answerOf(q.id)" class="answered">已答：{{ answerOf(q.id) }}</div>
               <div v-else class="answer-row">
                 <el-input v-model="drafts[q.id]" size="small" placeholder="用一句话补充事实（已脱敏）" />
                 <el-button size="small" type="primary" @click="sendAnswer(turn, q)">提交回答</el-button>
               </div>
             </div>
+            <p v-if="!questionsOf(turn).length" class="muted turn-note">{{ turnNote(turn) }}</p>
           </div>
 
-          <el-empty v-if="!(selected.turns || []).length" description="该会话暂无澄清问题" :image-size="70">
-            <p class="muted">问题由澄清 Agent 生成（模型端口尚未接入时会保持为空，见 SA-13）。</p>
+          <el-empty v-if="!(selected.turns || []).length" description="尚无澄清轮次" :image-size="70">
+            <p class="muted">打开会话时后端会自动让澄清 Agent 跑一轮；若模型未配置或失败，会作为「转人工审核」轮次记录在此。</p>
           </el-empty>
         </el-card>
       </el-col>
@@ -282,7 +315,10 @@ onMounted(load)
 .card-head .muted { margin-left: auto; }
 .session-card { margin-bottom: 18px; }
 .turn { margin-bottom: 18px; }
-.turn-head { font-size: 12px; color: var(--c-text-dim); margin-bottom: 8px; }
+.turn-head { font-size: 12px; color: var(--c-text-dim); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.turn-tag { flex: none; }
+.turn-note { margin: 6px 0 0; }
+.q-type { margin-left: 6px; font-size: 11px; color: var(--c-text-faint); }
 .question { padding: 10px 12px; border: 1px solid var(--el-border-color); border-radius: 8px; margin-bottom: 8px; }
 .q-text { margin: 0 0 8px; font-size: 13px; color: var(--c-text); }
 .answered { font-size: 12px; color: var(--el-color-success); }

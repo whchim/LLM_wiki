@@ -233,9 +233,11 @@ def append_clarification_turn(session_id: str, status: str, agent_output: dict,
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING turn_id, session_id, turn_no, status, agent_output, question_count, input_tokens, output_tokens, latency_ms, created_at",
             (turn_id, session_id, turn_no, status, Jsonb(agent_output), question_count, input_tokens, output_tokens, latency_ms)).fetchone()
         # 最后一轮仍有缺口时明确转人工，避免无限追问。
+        # turn 与 session 的状态词表不同（turn 用 human_review，session 用 needs_human_review），
+        # 必须显式映射，否则会话侧会撞 CHECK 约束。
         next_status = (
             "open" if status == "needs_clarification" and turn_no < max_rounds
-            else "needs_human_review" if status == "needs_clarification"
+            else "needs_human_review" if status in ("needs_clarification", "human_review")
             else status
         )
         conn.execute("UPDATE clarification_sessions SET round_count=%s, status=%s, updated_at=now() WHERE session_id=%s",
