@@ -11,6 +11,7 @@ import customer_state
 import sales_preprocess
 import clarification_service
 import model_port
+import sensitive_cipher
 
 router = APIRouter(prefix="/clarifications", tags=["clarification"])
 
@@ -35,6 +36,9 @@ def intake(body: SalesIntakeRequest, request: Request,
                        f"请先在「客户别名」中建立绑定，或直接填写 customer_id")
         customer_id = resolved_from_alias
 
+    # 受控加密器：把正文里的精确金额/折扣/数量加密成密文，正文只留 [AMOUNT_REF:nv-xxx]。
+    # 未配置密钥时 encrypt_numeric 传 None —— 门禁会拒绝该纪要进入 Agent（不静默降级为明文）。
+    cipher = sensitive_cipher.SensitiveNumericCipher() if sensitive_cipher.is_available() else None
     prepared = sales_preprocess.preprocess_sales_input({
         "idempotency_key": body.idempotency_key,
         "customer_id": customer_id,
@@ -44,7 +48,7 @@ def intake(body: SalesIntakeRequest, request: Request,
         "source_type": body.source_type,
         "source_ref": body.source_ref,
         "language": "zh-CN",
-    })
+    }, encrypt_numeric=cipher.encrypt if cipher else None)
     if not prepared["accepted"]:
         raise HTTPException(status_code=400, detail={"message": "纪要未通过提交门禁", "errors": prepared["errors"],
                                                        "risk_flags": prepared["risk_flags"]})
@@ -70,6 +74,13 @@ def intake(body: SalesIntakeRequest, request: Request,
                     "gate": {"risk_flags": prepared["risk_flags"], "numeric_ref_count": 0, "idempotent_replay": True}}
         evidence = customer_state.add_evidence(
             conversation["conversation_id"], normalized["content_redacted"], normalized.get("source_ref"))
+        # 密文与粗区间落受限表：Agent/检索/日志只见到占位符与区间，精确值需授权才可解密
+        for ref in prepared["numeric_refs"]:
+            if not ref.get("ciphertext"):
+                continue
+            customer_state.add_sensitive_numeric(
+                evidence["evidence_id"], ref["field_type"], ref["ciphertext"],
+                cipher.current_version, comparison_bucket=ref.get("comparison_bucket"))
         session = db.create_clarification_session(conversation["conversation_id"], user.username)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

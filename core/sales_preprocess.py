@@ -35,12 +35,29 @@ INJECTION_PATTERNS = (
     re.compile(r"(?:<\s*(?:system|developer|tool)\s*>|\b(?:bash|powershell|shell)\s*:\s*)", re.I),
 )
 
-# 只提取有业务上下文的数字，避免把日期、年份和普通序号误当成敏感值。
+# 分类词 + 数值：命中一个就整体脱敏。
+# 词表刻意**宽**：真实销售口语里的连接词远不止"为/是/约"（"大约是""给到""降到了"
+# "说预算"…），词表偏窄会直接漏掉明文金额。实测旧版 7/13 条真实口语句式漏网。
+# 注意：**光靠分类词不够**，因此另有 bare_amount 兜底（见 NUMERIC_PATTERN 注释）。
+MONEY_FIELDS = ("合同金额", "合同价", "金额", "预算", "报价", "价格", "单价", "费用", "总价", "成本", "款项")
+DISCOUNT_FIELDS = ("折让", "折扣", "优惠", "折")   # 长词在前：交替匹配取最长
+QUANTITY_FIELDS = ("用户数", "并发数", "数量", "数目", "台数", "席位")
+CONNECTORS = ("大约是", "大概为", "大约为", "大概是", "给到", "降到", "谈到", "涨到",
+              "说到", "至", "到", "为", "是", "约", ":", "：", "=", " ")
+_CONN = r"(?:" + "|".join(CONNECTORS) + r")"
+_SP = r"[^0-9\u3400-\u9fff]{0,3}"   # 仅用于兜住空格/标点这类短噪声
+
 NUMERIC_PATTERN = re.compile(
-    r"(?P<amount>(?:金额|预算|报价|价格|费用|合同价|总价|成本)\s*(?:为|是|约|大约)?\s*"
-    r"(?:人民币|￥|¥)?\d[\d,]*(?:\.\d+)?\s*(?:万元?|万|元|块)?)"
-    r"|(?P<discount>(?:折扣|折让|优惠)\s*(?:为|到|至)?\s*\d+(?:\.\d+)?\s*(?:%|折)?)"
-    r"|(?P<quantity>(?:数量|数目|台数|席位|用户数|并发数)\s*(?:为|是|约)?\s*\d[\d,]*\s*(?:个|台|套|席位|人)?)",
+    r"(?P<amount>(?:" + "|".join(MONEY_FIELDS) + r")" + _SP + _CONN + r"?\s*"
+    r"\d[\d,]*(?:\.\d+)?\s*(?:万元|万|元|块|人民币|￥|¥)?)"
+    r"|(?P<discount>(?:" + "|".join(DISCOUNT_FIELDS) + r")" + _SP + r"(?:" + _CONN + r")?\s*"
+    r"\d+(?:\.\d+)?\s*(?:%|折|个点)?)"
+    r"|(?P<quantity>(?:" + "|".join(QUANTITY_FIELDS) + r")" + _SP + r"(?:" + _CONN + r")?\s*"
+    r"\d[\d,]*\s*(?:个|台|套|席位|人)?)"
+    # 金额兜底：**数值 + 明确货币单位**，不要求出现分类词。
+    # 真实纪要常只写"50万""12.5万元"而不带"预算"二字；单位留在组外，
+    # 靠"数字后必须紧跟货币单位"限定边界，避免 2026 年/编号这类被误吞。
+    r"|(?P<bare_amount>\d[\d,]*(?:\.\d+)?\s*(?:万元|万|元|块|人民币|￥|¥))",
     re.I,
 )
 
@@ -84,7 +101,10 @@ def _redact_numeric(content: str, idempotency_key: str,
 
     def replace(match: re.Match[str]) -> str:
         nonlocal ordinal
-        field_type = next(name for name in ("amount", "discount", "quantity") if match.group(name))
+        field_type = next(name for name in ("amount", "discount", "quantity", "bare_amount")
+                          if match.group(name))
+        # 兜底组统一归类为金额（落库 field_type 受 schema 约束，没有 bare_amount 这一档）
+        field_type = "amount" if field_type == "bare_amount" else field_type
         original = match.group(0)
         ordinal += 1
         digest = hashlib.sha256(f"{idempotency_key}:{field_type}:{ordinal}:{original}".encode()).hexdigest()[:16]

@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 import sales_preprocess
 
 
@@ -117,6 +119,64 @@ def test_non_chinese_and_unsupported_language_are_rejected():
     assert result["accepted"] is False
     assert any("中文" in error for error in result["errors"])
     assert any("zh-CN" in error for error in result["errors"])
+
+
+# ---- 敏感数值识别覆盖率 ----
+# 背景：旧正则要求「分类词 + 连接词（仅 为/是/约/大约）+ 数值」紧邻，实测 13 条真实
+# 口语里漏 7 条（"预算大约是12.5万元""希望折扣给到8折"），且完全没有分类词时
+# （"这个项目大概 50万 吧"）金额会明文进入 Agent。下面把这两类都锁住。
+
+_MUST_REDACT = [
+    pytest.param("客户预算为 120 万元", id="canonical"),
+    pytest.param("预算大约是12.5万元", id="long-connector"),
+    pytest.param("客户说预算是12.5万", id="field-word-separated"),
+    pytest.param("希望折扣给到8折", id="discount-geidao"),
+    pytest.param("优惠到9折", id="discount-youhui-dao"),
+    pytest.param("价格降到了50万", id="price-jiangdao"),
+    pytest.param("合同金额: 1200000元", id="colon-separated"),
+    pytest.param("单价 3 万一套", id="unit-price"),
+    pytest.param("这个项目大概 50万 吧", id="bare-amount-no-field-word"),
+    pytest.param("客户提了12.5万元", id="bare-amount-plain"),
+    pytest.param("数量为30台", id="quantity-wei"),
+    pytest.param("并发数 500", id="quantity-plain"),
+]
+
+
+@pytest.mark.parametrize("text", _MUST_REDACT)
+def test_realistic_phrasings_are_redacted(text):
+    redacted, refs, _ = sales_preprocess._redact_numeric(text, "k1", lambda r, f, v: f"enc:{r}")
+    assert refs, f"未识别出敏感数值：{text!r} → {redacted!r}"
+    assert "REF:" in redacted, f"正文未替换为占位符：{redacted!r}"
+
+
+_MUST_NOT_REDACT = [
+    pytest.param("客户2026年9月11日来访", id="date"),
+    pytest.param("合同编号 20260912", id="doc-number"),
+    pytest.param("本季度内完成方案评估", id="no-digit"),
+    pytest.param("三年期合同", id="chinese-numeral"),
+    pytest.param("覆盖 3 个省", id="plain-count"),
+    pytest.param("第 2 次沟通", id="ordinal"),
+    pytest.param("客户要求 90 天内答复", id="duration"),
+]
+
+
+@pytest.mark.parametrize("text", _MUST_NOT_REDACT)
+def test_non_monetary_numbers_are_not_redacted(text):
+    """日期/编号/序数不得被当成金额——否则会破坏正文语义与证据定位。"""
+    redacted, refs, _ = sales_preprocess._redact_numeric(text, "k1", lambda r, f, v: f"enc:{r}")
+    assert refs == [], f"误伤非金额数字：{text!r} → {redacted!r}"
+
+
+def test_money_field_is_classified_as_amount():
+    """兜底组必须落成受 schema 约束的 field_type（没有 bare_amount 这一档）。"""
+    _, refs, _ = sales_preprocess._redact_numeric("这个项目大概 50万 吧", "k1", lambda r, f, v: f"enc:{r}")
+    assert refs and refs[0]["field_type"] == "amount"
+
+
+def test_bare_amount_requires_monetary_unit():
+    """裸数字不脱敏：只有带货币单位才走兜底，避免把年份当金额。"""
+    _, refs, _ = sales_preprocess._redact_numeric("项目大概 50 左右", "k1", lambda r, f, v: f"enc:{r}")
+    assert refs == []
 
 
 def test_numeric_reference_is_stable_for_same_input():

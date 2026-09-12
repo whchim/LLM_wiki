@@ -9,5 +9,8 @@ PyJWT>=2.8
 pwdlib[argon2]>=0.2
 # /uploads 用 File/Form（multipart）——原先由 streamlit 传递引入，显式声明避免被移除
 python-multipart>=0.0.9
+# 敏感数值受控加密（AES-GCM）：SA-01 要求精确金额不得明文进入 Agent/日志/向量索引。
+# 用成熟实现而非自研密码学构造。
+cryptography>=42
 # 可选依赖：LLM 层可观测性探针（SP2.5）——未配置 LANGFUSE_* 环境变量时无需安装
 # langfuse>=2.10

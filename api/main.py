@@ -29,6 +29,9 @@ async def lifespan(_app: FastAPI):
     # 启动自愈：目录树 + 建表 + 初始管理员（幂等）
     db.ensure_schema()
     auth.ensure_ready()  # JWT_SECRET 缺失时启动即失败（import 时检查已移除，见 auth.py）
+    # 敏感数值加密器：生产环境必须配置 SENSITIVE_FIELD_KEY，否则含金额的纪要无法提交
+    import sensitive_cipher
+    sensitive_cipher.require_ready()
     yield
     db.close_pool()  # 优雅退出，避免连接池线程悬挂
 

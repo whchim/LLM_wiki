@@ -48,6 +48,12 @@ services:
       - ADMIN_INIT_PASS=${ADMIN_INIT_PASS:-admin123}
       # SP4 混合检索：未配置时 /search 自动降级 grep-only（向量通道失效）
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      # 敏感数值受控加密器（SA-01）：未配置时含金额的纪要会被门禁拒绝
+      - SENSITIVE_FIELD_KEY=${SENSITIVE_FIELD_KEY:-}
+      # 模型调用（销售澄清 Agent）
+      - MODEL_BASE_URL=${MODEL_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - MODEL_API_KEY=${MODEL_API_KEY:-}
+      - MODEL_NAME=${MODEL_NAME:-qwen-plus}
       # SP2.5 可观测性探针（可选；未配置时 tools/langfuse_probe.py 零侵入跳过）
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
