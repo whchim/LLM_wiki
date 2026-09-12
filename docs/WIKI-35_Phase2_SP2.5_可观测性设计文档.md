@@ -70,7 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_trace_traceid ON trace_events (trace_id);
 用法：python tools/record_compile_trace.py --trace-id <uuid> --operation "batch"
       --compiled 5 --cached 3 --failed 0 --files '["NEXUS/资源/a.md",...]' [--latency-ms 12000]
 ```
-- 复用 `streamlit_app/db.py` 的连接池写 `trace_events`
+- 复用 `core/db.py` 的连接池写 `trace_events`
 - 无 Python 环境时优雅降级（process-triggers 里已是"本机无 Python 时报错并标记 failed"，本次同策略）
 - 参数由 Claude Code 编译会话填充（workflow 明确规定字段来源）
 
@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_trace_traceid ON trace_events (trace_id);
 
 ## 5. Streamlit 可观测性页
 
-新增 `streamlit_app/obs.py`（第 4 页，只读直查 trace_events，与 growth.py 同模式）：
+新增 `core/obs.py`（第 4 页，只读直查 trace_events，与 growth.py 同模式）：
 
 | 指标 | 口径 |
 |------|------|

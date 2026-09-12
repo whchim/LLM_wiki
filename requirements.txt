@@ -1,12 +1,13 @@
-streamlit>=1.36,<2
+# 后端运行依赖（FastAPI + 数据层）。
+# 前端已迁至 Vue 3（frontend/），不再需要 streamlit / pandas。
 pyyaml>=6.0
-pandas>=2.0
 psycopg[binary]>=3.1
 psycopg_pool>=3.1
 fastapi>=0.115
 uvicorn[standard]>=0.30
 PyJWT>=2.8
 pwdlib[argon2]>=0.2
+# /uploads 用 File/Form（multipart）——原先由 streamlit 传递引入，显式声明避免被移除
+python-multipart>=0.0.9
 # 可选依赖：LLM 层可观测性探针（SP2.5）——未配置 LANGFUSE_* 环境变量时无需安装
 # langfuse>=2.10
-# conda activate llm-wiki

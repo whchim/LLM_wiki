@@ -7,7 +7,7 @@ import json
 import math
 import os
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 import db
 from api import auth, trace as trace_mod
@@ -187,6 +187,32 @@ def entries(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0, 
             "SELECT COUNT(*) FROM knowledge_entries").fetchone()[0]
     keys = ["path", "type", "title", "department", "status", "version", "updated_at"]
     return {"total": total, "items": [dict(zip(keys, r)) for r in rows]}
+
+
+@router.get("/entries/content")
+def entry_content(path: str = Query(..., min_length=1, max_length=500),
+                  user: auth.User = Depends(auth.get_current_user)) -> dict:
+    """条目正文（供审核预览与知识浏览；只读，限 kb_root 内的 Markdown/文本）。
+
+    Vue 前端无法访问共享卷，因此把只读预览做成受认证的 API。
+    """
+    import os
+    from pathlib import Path
+
+    kb_root = Path(_kb_root()).resolve()
+    target = (kb_root / path).resolve()
+    # 防路径穿越：解析后必须仍在 kb_root 内
+    if kb_root not in target.parents and target != kb_root:
+        raise HTTPException(status_code=400, detail="路径非法：越出知识库根目录")
+    if target.suffix.lower() not in {".md", ".txt", ".markdown"}:
+        raise HTTPException(status_code=400, detail="仅支持预览 .md / .markdown / .txt")
+    if not target.is_file():
+        return {"path": path, "exists": False, "content": None, "size": 0}
+    size = target.stat().st_size
+    if size > 1_000_000:
+        raise HTTPException(status_code=413, detail=f"文件过大（{size} 字节），请用 Obsidian 打开 vault/ 查看")
+    return {"path": path, "exists": True, "content": target.read_text(encoding="utf-8", errors="replace"),
+            "size": size}
 
 
 @router.get("/entries/mine")

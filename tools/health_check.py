@@ -18,7 +18,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core"))
 
 STALE_DAYS = 180          # 过期阈值（PRD 6.4）
 SIMILAR_THRESHOLD = 0.85  # 相似候选判定（字符基线，LLM 复核语义）

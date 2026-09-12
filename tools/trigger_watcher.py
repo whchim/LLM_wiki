@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LOG_FILE = ROOT / "tools" / "watcher.log"
 
 # 复用项目数据层（compile_tasks 查询/插入 + 触发文件写入）
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core"))
 
 INTERVAL = int(os.environ.get("WATCHER_INTERVAL", "5"))
 TIMEOUT = int(os.environ.get("WATCHER_TIMEOUT", "900"))

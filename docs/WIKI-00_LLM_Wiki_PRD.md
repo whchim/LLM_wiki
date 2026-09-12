@@ -981,7 +981,7 @@ llm-wiki-demo/
 ├── requirements.txt
 ├── .env.example              # Claude API 配置（无需额外 LLM Key）
 ├── init.sh                   # 初始化 Vault + 建表 + 生成 SCHEMA.md
-├── streamlit_app/            # Streamlit 轻量管理层（直接操作 Vault 和 SQLite）
+├── core/            # Streamlit 轻量管理层（直接操作 Vault 和 SQLite）
 │   ├── upload.py             # 上传页
 │   ├── review.py             # 审核面板
 │   ├── growth.py             # 自增长看板（搜索未命中 Top 20）
@@ -1311,7 +1311,7 @@ dedup = similar → approved（加标注）
 - 第七章 Demo 范围：MCP Server 升 P0、加自增长引擎、Streamlit 4页→3页
 - Phase 2：加知识演进 + 关联涌现 + JWT 认证
 - Phase 3：加外部源感知 + Obsidian Graph View 增强
-- 第九章目录结构重写：vault/ + mcp_server/ + streamlit_app/ + workflows/
+- 第九章目录结构重写：vault/ + mcp_server/ + core/ + workflows/
 - 演示脚本重写：体现 Obsidian 操作 + 自增长看板
 
 **历史变更（v1.5）**：三轮自审修复 14 处内部矛盾与精度缺陷

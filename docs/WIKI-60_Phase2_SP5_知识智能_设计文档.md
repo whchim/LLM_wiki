@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS health_reports (
 ├── tools/archive_done.py         # 新增：done/ 归档清理
 ├── workflows/health_workflow.md  # 新增：Claude 轨（相似复核/孤立判定/建议生成）
 ├── .claude/commands/health-check.md        # 新增：手动入口
-├── streamlit_app/growth.py       # 🔄 看板加"最近健康周报"卡片（与周报同模式）
+├── core/growth.py       # 🔄 看板加"最近健康周报"卡片（与周报同模式）
 ├── tests/test_health_check.py    # 新增：四类检测 + 周报落库 + 幂等
 └── docs/WIKI-60_Phase2_SP5_知识智能_设计文档.md    # 本文档
 ```

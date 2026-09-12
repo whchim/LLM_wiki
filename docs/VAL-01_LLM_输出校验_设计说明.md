@@ -4,7 +4,7 @@
 >
 > **定位**：把 prompts/ 里的输出契约从"prompt 自觉"变成**代码级可执行断言**——LLM 输出不确定性是 Agent 工程的第一不确定源，确定性校验必须落在代码与测试上（沿用"规则明确交程序"范式，与 rules.py 同款）。
 
-## 1. 三组校验（streamlit_app/output_schema.py）
+## 1. 三组校验（core/output_schema.py）
 
 | 校验 | 产物入口 | 契约来源 | 检查内容 |
 |------|---------|---------|---------|
@@ -53,4 +53,4 @@ python tools/validate_llm_output.py frontmatter <entry.md>
 ## Changelog
 
 - **v0.2（2026-09-03）**：质量门禁进 agent loop——`workflows/review_workflow.md` 步骤 d2 写入前契约校验（违例重试 1 次、再败不写库）、`workflows/compile_workflow.md` 步骤 2c 落盘前校验 + 输出验收节；新增 `tools/prompt_regression.py`（契约短语存在性 × golden 样例回归，零 LLM/零 DB，已进 CI）；4 个 golden 样例 cases（valid/invalid × review/compile）。
-- **v0.1（2026-09-01）**：初稿。新增 streamlit_app/output_schema.py（三组校验）、tools/validate_llm_output.py（CLI 自检门禁，utf-8-sig 容错 BOM）、/reviews 响应 ai_scores_valid 标记（ReviewOut + _to_out）、tests/test_output_schema.py（23 用例）。不侵入既有写路径。
+- **v0.1（2026-09-01）**：初稿。新增 core/output_schema.py（三组校验）、tools/validate_llm_output.py（CLI 自检门禁，utf-8-sig 容错 BOM）、/reviews 响应 ai_scores_valid 标记（ReviewOut + _to_out）、tests/test_output_schema.py（23 用例）。不侵入既有写路径。

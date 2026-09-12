@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-_SHARED = ROOT / "streamlit_app"
+_SHARED = ROOT / "core"
 if str(_SHARED) not in sys.path:
     sys.path.insert(0, str(_SHARED))
 

@@ -40,8 +40,9 @@
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │  服务层（Docker Compose 三容器）                                     │
 │  ┌──────────┐   HTTP/JWT    ┌──────────┐   psycopg3   ┌──────────┐  │
-│  │ Streamlit│ ────────────► │ FastAPI  │ ───────────► │PostgreSQL│  │
-│  │   :8501  │   Bearer Token│   :8000  │   连接池     │16+pgvector│  │
+│  │ Vue 3    │ ────────────► │ FastAPI  │ ───────────► │PostgreSQL│  │
+│  │ 工作台    │  Bearer Token │   :8000  │   连接池     │16+pgvector│  │
+│  │ (nginx)  │               │          │              │          │  │
 │  └──────────┘               └──────────┘              └──────────┘  │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │ 共享卷 ./vault 挂载（上传落盘/只读预览）
@@ -58,9 +59,9 @@
 
 **三个关键设计决策**：
 
-1. **Claude Code 掌 LLM，FastAPI 掌数据** — 编译/审核/问答仍由 Claude Code（Bash 直操作 Vault + `_triggers/` 触发文件消费），**不重造 LLM 调用与 Agent 编排**；FastAPI 接管数据访问层（REST API 化上传/审核/搜索/管理 + JWT 认证 + 审计日志），Streamlit 管理台经 API 消费，不再直连数据库写操作。
+1. **Claude Code 掌 LLM，FastAPI 掌数据** — 编译/审核/问答仍由 Claude Code（Bash 直操作 Vault + `_triggers/` 触发文件消费），**不重造 LLM 调用与 Agent 编排**；FastAPI 接管数据访问层（REST API 化上传/审核/搜索/管理 + JWT 认证 + 审计日志），Vue 工作台经 API 消费，不直连数据库。
 2. **PostgreSQL 是缓存，不是权威** — YAML Frontmatter 是规范数据源；任何状态变更双写；不一致时以文件为准；`rebuild_index()` 可从文件全量重建缓存（pgvector 向量列同为可重建缓存，SP4 用）。
-3. **触发文件消息队列** — API/Streamlit 写 `vault/_triggers/compile_*.md`（原子写 tmp+mv）作为异步信号；Claude Code 经 SessionStart hook / `/process-triggers` 消费，实现"管理台/API ↔ LLM 引擎"解耦。
+3. **触发文件消息队列** — API/工作台写 `vault/_triggers/compile_*.md`（原子写 tmp+mv）作为异步信号；Claude Code 经 SessionStart hook / `/process-triggers` 消费，实现"工作台/API ↔ LLM 引擎"解耦。
 
 ---
 
@@ -84,7 +85,7 @@
 | [SA-02](docs/SA-02_销售客户状态Agent_领域模型.md) / [SA-03](docs/SA-03_销售客户状态Agent_生产形态检查清单.md) / [SA-04](docs/SA-04_销售客户状态Agent_合成评测报告.md) | 领域模型 / 生产形态自检 / 合成评测报告 |
 | [SA-10](docs/SA-10_销售事实澄清Agent_迭代计划.md) ~ [SA-15](docs/SA-15_销售事实澄清Agent_Vue3工作台.md) | 澄清 Agent 契约族与 Vue 3 工作台 |
 
-**Vue 3 工作台**（`frontend/`，Vite，`:5173`）覆盖销售澄清、负责人审核与客户状态证据时间线；与 Streamlit 共用同一 FastAPI，不改变后端权限、审计和状态机边界。
+**Vue 3 工作台**（`frontend/`，Vue 3 + Element Plus + Vite）是**唯一界面**，覆盖知识域（总览 / 我的知识库 / 全部条目 / 上传 / 审核）与销售域（销售澄清 / 客户状态）；生产由 nginx 托管构建产物并反代 `/api`，开发态走 Vite 代理，共用同一套 FastAPI 权限、审计与状态机边界。
 
 ---
 
@@ -113,21 +114,22 @@
 git clone git@github.com:whchim/LLM_wiki.git && cd LLM_wiki
 
 # 方式 A：Docker（推荐）
-docker compose up -d          # 启动 PostgreSQL + FastAPI API + Streamlit 管理台
+docker compose up -d          # 启动 PostgreSQL + FastAPI + Vue 工作台（nginx）
 # 打开 http://localhost:8501 → 登录（默认 admin / admin123，建议首次登录后修改）
 
-# 方式 B：本地 Python（可选）
+# 方式 B：本地开发（前端热更新）
 bash init.sh                  # 初始化 Vault 目录树 + 建表（幂等）
 pip install -r requirements.txt
 uvicorn api.main:app --port 8000 &   # 先起 API（需 PostgreSQL 在 5432）
-streamlit run streamlit_app/app.py
+cd frontend && npm install && npm run dev   # 前端 :5173，/api 代理到 :8000
 ```
 
-**服务端口**：Streamlit 管理台 `:8501` ｜ FastAPI REST API `:8000`（交互文档 `/docs`）｜ PostgreSQL `:5432` ｜ Vue 3 销售工作台 `:5173`（`cd frontend && npm install && npm run dev`，API 默认 `:8000`，可用 `VITE_API_BASE` 覆盖；Docker Compose 当前仍启动 Streamlit，Vue 需单独启动）。
+**服务端口**：**Vue 3 工作台 `:8501`**（容器内由 nginx 托管静态产物并反代 `/api`）｜ 开发态前端 `:5173` ｜ FastAPI REST API `:8000`（交互文档 `/docs`）｜ PostgreSQL `:5432`。
 
 **默认账号**：`admin / admin123`（环境变量 `ADMIN_INIT_USER/ADMIN_INIT_PASS` 可改）。
 
-**知识浏览**：用 [Obsidian](https://obsidian.md/) 打开 `vault/` 目录，即可看到编译产物的图谱、wikilink 导航、反向链接。
+**知识浏览**：工作台的「全部条目」页可在线预览 Markdown 正文；要看图谱与反向链接，用 [Obsidian](https://obsidian.md/) 打开 `vault/` 目录。
+
 
 > clone 后知识索引初始为空。沿下方"核心闭环"走一遍上传→编译→审核流程，知识库即开始增长；索引当前规模见"真实数据验收"节。
 
@@ -225,7 +227,7 @@ docker compose run --rm api pytest tests -q
 
 ```
 ├── api/                  # FastAPI 后端（main/auth/audit/schemas + routers/：知识层 + 应用层路由）
-├── streamlit_app/        # 管理台与知识层页面（app/upload/review/growth + login/api_client + db/ops/rules）
+├── core/        # 管理台与知识层页面（app/upload/review/growth + login/api_client + db/ops/rules）
 ├── frontend/             # Vue 3 销售工作台（Vite，:5173；复用同一 FastAPI）
 ├── vault/                # Obsidian 知识库根目录（Markdown 权威存储）
 │   ├── RAW/              # 原始文档（个人_notes/会议/经验/项目）
@@ -251,7 +253,7 @@ docker compose run --rm api pytest tests -q
 | 子项目 | 内容 | 状态 |
 |--------|------|------|
 | **SP1 数据地基** | SQLite → PostgreSQL 16 + pgvector，知识层 7 表 + users，迁移脚本 | ✅ 已交付（`886b2f6`） |
-| **SP2 API 与安全** | FastAPI REST + JWT 认证 + 审计日志，Streamlit 接入 | ✅ 已交付（`d174fa1`/`2cd5881`） |
+| **SP2 API 与安全** | FastAPI REST + JWT 认证 + 审计日志，界面接入 | ✅ 已交付（`d174fa1`/`2cd5881`） |
 | **SP2.5 可观测性** | 编译过程 Trace + 端点埋点 + 看板页 | ✅ 已交付（`a1b71f5`） |
 | **SP3 增量编译** | 触发 watcher 全自动编译 + compile_tasks 断点续跑 | ✅ 已交付（`4ba4304`/`bbcfae7`） |
 | **SP4 混合检索** | grep + pgvector 双通道加权融合 + 评测集/缺口阈值判据 | ✅ 已交付（`6269f1b`/`2571072`） |

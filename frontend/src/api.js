@@ -1,3 +1,4 @@
+// LLM Wiki 工作台 API 客户端（统一入口）
 // 开发服务器通过 Vite 代理转发 /api，避免 localhost 与 127.0.0.1 的跨域差异。
 const API_BASE = import.meta.env.VITE_API_BASE || '/api'
 
@@ -10,7 +11,8 @@ export class ApiError extends Error {
 
 export async function request(path, options = {}) {
   const token = localStorage.getItem('llmwiki_token')
-  const headers = { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }
+  const isForm = options.body instanceof FormData
+  const headers = { ...(options.body && !isForm ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }
   if (token) headers.Authorization = `Bearer ${token}`
   let response
   try {
@@ -21,20 +23,87 @@ export async function request(path, options = {}) {
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
     const detail = payload.detail
-    const message = typeof detail === 'object' ? detail.errors?.join('；') || detail.message : detail || '请求失败'
+    const message = typeof detail === 'object'
+      ? detail.errors?.join('；') || detail.message || JSON.stringify(detail)
+      : detail || '请求失败'
     throw new ApiError(response.status, message)
   }
   return payload
 }
 
+const qs = (params) => {
+  const usable = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== '')
+  return usable.length ? '?' + new URLSearchParams(usable).toString() : ''
+}
+
 export const api = {
+  // ---- 认证 ----
   login: (username, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+
+  // ---- 知识层：条目与检索 ----
+  entries: (params) => request(`/entries${qs(params)}`),
+  myEntries: (limit = 200) => request(`/entries/mine${qs({ limit })}`),
+  entryContent: (path) => request(`/entries/content${qs({ path })}`),
+  search: (query, mode) => request(`/search${qs({ query, mode })}`),
+  searchStats: () => request('/search/stats'),
+  searchMissed: (limit = 20) => request(`/search/missed${qs({ limit })}`),
+
+  // ---- 知识层：上传与编译任务 ----
+  listTasks: (limit = 50) => request(`/uploads/tasks${qs({ limit })}`),
+  retryTask: (id) => request(`/uploads/tasks/${id}/retry`, { method: 'POST' }),
+  upload: (formData) => request('/uploads', { method: 'POST', body: formData }),
+
+  // ---- 知识层：审核 ----
+  reviewsPending: () => request('/reviews/pending'),
+  reviewsRejected: () => request('/reviews/rejected'),
+  approve: (id) => request(`/reviews/${id}/approve`, { method: 'POST' }),
+  reject: (id, reason) => request(`/reviews/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  resubmit: (id) => request(`/reviews/${id}/resubmit`, { method: 'POST' }),
+  retryAi: (id) => request(`/reviews/${id}/retry-ai`, { method: 'POST' }),
+
+  // ---- 管理：可观测性与周报 ----
+  observability: () => request('/admin/observability'),
+  reports: (kind) => request(`/admin/reports${qs({ kind })}`),
+  rebuildIndex: () => request('/admin/rebuild-index', { method: 'POST' }),
+  backfillEmbeddings: (batch = 10) => request(`/admin/backfill-embeddings${qs({ batch })}`, { method: 'POST' }),
+
+  // ---- 销售域：事实澄清 ----
   intake: (body) => request('/clarifications/intake', { method: 'POST', body: JSON.stringify(body) }),
   mine: () => request('/clarifications/mine'),
   sessions: () => request('/clarifications/sessions'),
   session: (id) => request(`/clarifications/sessions/${id}`),
   answer: (id, body) => request(`/clarifications/sessions/${id}/answers`, { method: 'POST', body: JSON.stringify(body) }),
+
+  // ---- 销售域：客户状态 ----
   proposals: () => request('/customer-states/proposals/pending'),
   decide: (id, body) => request(`/customer-states/proposals/${id}/decision`, { method: 'POST', body: JSON.stringify(body) }),
   events: (customerId) => request(`/customer-states/${encodeURIComponent(customerId)}/events`),
 }
+
+// 中文枚举映射（多处复用，避免各页重复定义）
+export const STAGE_ORDER = ['已发布', '待审核', '已编译', '编译中', '编译失败', '已驳回', '已上传']
+export const STAGE_LABELS = {
+  已发布: '已发布', 待审核: '待审核', 已编译: '已编译', 编译中: '编译中',
+  编译失败: '编译失败', 已驳回: '已驳回', 已上传: '已上传',
+}
+export const STAGE_HINT = {
+  已发布: '已通过审核进入企业知识库，全员可检索',
+  待审核: '编译产物等待 AI 六维度审核或人工放行',
+  已编译: '编译已完成，等待进入审核队列',
+  编译中: 'Claude Code 正在处理（触发队列 watcher）',
+  编译失败: '编译中断，可在上传页重试',
+  已驳回: '审核未通过，可修改后重新提交',
+  已上传: '已落盘 RAW/，尚未开始编译',
+}
+export const STATE_LABELS = {
+  new_lead: '新线索', contacted: '已接触', need_confirmed: '需求已确认',
+  solution_eval: '方案评估', commercial_negotiation: '商务谈判',
+  won: '已赢单', lost_or_paused: '流失/暂停', expired: '已过期',
+}
+export const SESSION_STATUS_LABELS = {
+  open: '等待澄清', needs_human_review: '转人工审核', ready_for_proposal: '可生成建议',
+  completed: '已完成', cancelled: '已取消',
+}
+export const ROLE_LABELS = { admin: '管理员', reviewer: '审核者', user: '普通用户' }
+export const ENTRY_TYPE_LABELS = { concept: '概念', resource: '资源', research: '研究', glossary: '术语' }
+export const ENTRY_STATUS_LABELS = { draft: '草稿', pending: '待审', active: '已发布', stale: '过期', deprecated: '废弃' }

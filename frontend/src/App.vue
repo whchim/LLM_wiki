@@ -1,157 +1,235 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ArrowUpRight, Check, ChevronRight, CircleAlert, Clock3, FileText, LayoutDashboard, LogOut, MessageSquareMore, RefreshCw, ShieldCheck, Sparkles, Upload, UserRound } from 'lucide-vue-next'
-import { api, ApiError } from './api'
+import { ElMessage } from 'element-plus'
+import {
+  DataAnalysis, DataBoard, Document, FolderOpened, Refresh, Search,
+  Setting, UploadFilled, UserFilled, ChatDotRound, Checked, SwitchButton,
+} from '@element-plus/icons-vue'
+import { api, ApiError, ROLE_LABELS } from './api'
+
+import LoginPage from './pages/LoginPage.vue'
+import OverviewPage from './pages/OverviewPage.vue'
+import MyKbPage from './pages/MyKbPage.vue'
+import BrowsePage from './pages/BrowsePage.vue'
+import UploadPage from './pages/UploadPage.vue'
+import ReviewPage from './pages/ReviewPage.vue'
+import GrowthPage from './pages/GrowthPage.vue'
+import ObservabilityPage from './pages/ObservabilityPage.vue'
+import SalesPage from './pages/SalesPage.vue'
+import CustomerStatePage from './pages/CustomerStatePage.vue'
 
 const auth = ref(JSON.parse(localStorage.getItem('llmwiki_auth') || 'null'))
 const view = ref('overview')
 const loading = ref(false)
-const error = ref('')
-const notice = ref('')
-const sessions = ref([])
-const proposals = ref([])
-const selectedSession = ref(null)
-const selectedProposal = ref(null)
-const answerDrafts = ref({})
-const loginForm = ref({ username: 'admin', password: 'admin123' })
-const intakeForm = ref({ customer_id: '', idempotency_key: '', occurred_at: occurredAtLocal(), source_type: 'meeting_note', source_ref: null, content: '' })
-const importedFile = ref(null)
-const fileInput = ref(null)
-const fileError = ref('')
-
-/** 本地时间转 datetime-local 需要的 YYYY-MM-DDTHH:mm（不能用 toISOString，那是 UTC）。 */
-function occurredAtLocal(date = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-function uid() { return globalThis.crypto?.randomUUID?.() || `k-${Date.now()}-${Math.random().toString(16).slice(2, 10)}` }
-
-/** 从纪要文件名推断客户脱敏标识（去掉 .md 与日期前缀），仅在字段为空时兜底填入。 */
-function guessCustomerId(filename) {
-  const base = filename.replace(/\.[^.]+$/, '').replace(/^\d{4}[-_]?\d{2}[-_]?\d{2}[-_\s]*/, '').trim()
-  const slug = base.replace(/[^\w\u4e00-\u9fa5-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
-  return slug || ''
-}
-
-function pickFile() { fileError.value = ''; fileInput.value?.click() }
-
-/**
- * 选择本地纪要文件 → 读入正文。
- * 刻意不自动提交：SA-01 的敏感信息 / Prompt injection / 数字隔离门禁跑在正文上，
- * 销售需要先过目并删改，才不绕过"什么内容可以提交"这一步。
- */
-async function readFileIntoContent(event) {
-  const file = event.target.files?.[0]
-  if (!file) return
-  fileError.value = ''
-  const allowed = ['.md', '.markdown', '.txt']
-  if (!allowed.some((ext) => file.name.toLowerCase().endsWith(ext))) {
-    fileError.value = `仅支持 ${allowed.join(' / ')} 格式的纪要文件。`
-    event.target.value = ''
-    return
-  }
-  if (file.size > 1024 * 1024) {
-    fileError.value = `文件 ${(file.size / 1024 / 1024).toFixed(1)}MB 超过 1MB 上限，请先精简后再导入。`
-    event.target.value = ''
-    return
-  }
-  try {
-    const text = await file.text()
-    if (text.trim().length < 10) {
-      fileError.value = `「${file.name}」没有可提交的正文（不足 10 字）。`
-      event.target.value = ''
-      return
-    }
-    intakeForm.value.content = text
-    intakeForm.value.source_type = 'meeting_note'
-    intakeForm.value.source_ref = file.name
-    intakeForm.value.occurred_at = occurredAtLocal()
-    intakeForm.value.idempotency_key = `file-${uid()}`
-    if (!intakeForm.value.customer_id.trim()) {
-      const guess = guessCustomerId(file.name)
-      if (guess) intakeForm.value.customer_id = guess
-    }
-    importedFile.value = { name: file.name, size: file.size }
-  } catch (err) {
-    fileError.value = `读取「${file.name}」失败：${err?.message || '未知错误'}`
-    event.target.value = ''
-    return
-  }
-  event.target.value = '' // 允许重复选择同一个文件以重新读取
-}
-
-function clearImportedFile() {
-  importedFile.value = null
-  intakeForm.value.content = ''
-  fileError.value = ''
-}
 
 const isReviewer = computed(() => ['admin', 'reviewer'].includes(auth.value?.role))
-const roleLabel = computed(() => ({ admin: '管理员', reviewer: '审核者', user: '销售' }[auth.value?.role] || '访客'))
-const statusLabel = (status) => ({ open: '等待澄清', needs_human_review: '转人工审核', ready_for_proposal: '可生成建议', completed: '已完成', cancelled: '已取消' }[status] || status)
-const stateLabel = (state) => ({ new_lead: '新线索', contacted: '已接触', need_confirmed: '需求已确认', solution_eval: '方案评估', commercial_negotiation: '商务谈判', won: '已赢单', lost_or_paused: '流失 / 暂停', expired: '已过期' }[state] || state || '未确认')
+const isAdmin = computed(() => auth.value?.role === 'admin')
+const roleLabel = computed(() => ROLE_LABELS[auth.value?.role] || '访客')
 
-async function run(task) {
-  loading.value = true; error.value = ''; notice.value = ''
-  try { await task() } catch (err) { error.value = err instanceof ApiError ? err.message : '操作失败，请稍后重试。' } finally { loading.value = false }
+// 导航结构：知识域为主（项目根基），销售域为落地应用
+const NAV = [
+  { key: 'overview', label: '工作总览', icon: DataBoard, group: '知识库' },
+  { key: 'my-kb', label: '我的知识库', icon: FolderOpened, group: '知识库' },
+  { key: 'browse', label: '全部条目', icon: Document, group: '知识库' },
+  { key: 'upload', label: '上传文档', icon: UploadFilled, group: '知识库' },
+  { key: 'review', label: '审核管理', icon: Checked, group: '知识库', reviewerOnly: true },
+  { key: 'growth', label: '自增长看板', icon: DataAnalysis, group: '洞察', reviewerOnly: true },
+  { key: 'observability', label: '可观测性', icon: Setting, group: '洞察', reviewerOnly: true },
+  { key: 'sales', label: '销售澄清', icon: ChatDotRound, group: '销售应用' },
+  { key: 'customer', label: '客户状态', icon: UserFilled, group: '销售应用', reviewerOnly: true },
+]
+const visibleNav = computed(() => NAV.filter((n) => !n.reviewerOnly || isReviewer.value))
+const groups = computed(() => [...new Set(visibleNav.value.map((n) => n.group))])
+
+function setAuth(result, username) {
+  auth.value = {
+    token: result.access_token, username,
+    role: result.role, display_name: result.display_name,
+  }
+  localStorage.setItem('llmwiki_token', result.access_token)
+  localStorage.setItem('llmwiki_auth', JSON.stringify(auth.value))
 }
 
-async function loadData() {
-  await run(async () => {
-    sessions.value = await api.mine()
-    if (isReviewer.value) proposals.value = await api.proposals()
-    // 首次加载只选中第一条会话，不强制切换页面，避免登录后跳过总览。
-    if (!selectedSession.value && sessions.value[0]) selectedSession.value = await api.session(sessions.value[0].session_id)
-  })
+function logout() {
+  localStorage.removeItem('llmwiki_token')
+  localStorage.removeItem('llmwiki_auth')
+  auth.value = null
+  view.value = 'overview'
 }
 
-async function login() {
-  await run(async () => {
-    const result = await api.login(loginForm.value.username, loginForm.value.password)
-    auth.value = { token: result.access_token, username: loginForm.value.username, role: result.role, display_name: result.display_name }
-    localStorage.setItem('llmwiki_token', result.access_token); localStorage.setItem('llmwiki_auth', JSON.stringify(auth.value)); view.value = 'overview'; await loadData()
-  })
+/** 全局搜索：命中则跳到条目浏览并带上查询词 */
+const searchQuery = ref('')
+function doSearch() {
+  if (!searchQuery.value.trim()) return
+  view.value = 'browse'
 }
 
-function logout() { localStorage.removeItem('llmwiki_token'); localStorage.removeItem('llmwiki_auth'); auth.value = null; selectedSession.value = null }
-
-async function submitIntake() {
-  await run(async () => {
-    await api.intake({ ...intakeForm.value, occurred_at: new Date(intakeForm.value.occurred_at).toISOString() })
-    notice.value = '纪要已通过门禁并创建澄清会话。'; intakeForm.value.content = ''; intakeForm.value.idempotency_key = ''; importedFile.value = null; await loadData(); view.value = 'sales'
-  })
+function notifyError(err) {
+  const message = err instanceof ApiError ? err.message : '操作失败，请稍后重试。'
+  ElMessage.error(message)
 }
 
-async function openSession(id) { selectedSession.value = await api.session(id); view.value = 'sales' }
-async function sendAnswer(turn, question) {
-  const value = (answerDrafts.value[question.id] || '').trim(); if (!value) return
-  await run(async () => { await api.answer(selectedSession.value.session_id, { turn_id: turn.turn_id, question_id: question.id, answer_text_redacted: value }); notice.value = '回答已追加保存。'; answerDrafts.value[question.id] = ''; await openSession(selectedSession.value.session_id); await loadData() })
+const rebuildLoading = ref(false)
+async function rebuildIndex() {
+  rebuildLoading.value = true
+  try {
+    const res = await api.rebuildIndex()
+    ElMessage.success(`索引已重建：${res.entries} 条`)
+  } catch (err) {
+    notifyError(err)
+  } finally {
+    rebuildLoading.value = false
+  }
 }
-async function openProposal(proposal) {
-  selectedProposal.value = { ...proposal, events: [] }
-  view.value = 'review'
-  try { selectedProposal.value.events = await api.events(proposal.customer_id) } catch (_) { /* 时间线不可用时仍保留证据引用 */ }
-}
-async function decide(decision) {
-  if (!selectedProposal.value) return
-  await run(async () => { await api.decide(selectedProposal.value.proposal_id, { decision, reason: decision === 'approved' ? '负责人确认' : '负责人在工作台提交决定' }); notice.value = '负责人决定已记录。'; selectedProposal.value = null; await loadData() })
-}
-function navigate(next) { view.value = next; if (next === 'review' && isReviewer.value) loadData() }
 
-onMounted(() => { if (auth.value) loadData() })
+onMounted(() => { if (auth.value) view.value = 'overview' })
+
+defineExpose({ notifyError })
 </script>
 
 <template>
-  <div v-if="!auth" class="auth-shell">
-    <div class="auth-art"><div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><div class="auth-mark"><Sparkles :size="20" /> SIGNAL / 01</div><h1>把模糊的<br /><em>销售现场</em>，变成<br />可确认的事实。</h1><p>Sales Signal Console 是一条有边界的 Agent 工作流：提取证据，追问缺口，交给负责人确认。</p><div class="auth-foot">受控工作流 · 证据优先 · 人工负责最终事实</div></div>
-    <form class="login-card" @submit.prevent="login"><div class="eyebrow">LLM WIKI / SALES OPS</div><h2>进入工作台</h2><p class="muted">用你的组织账号继续</p><label>用户名<input v-model="loginForm.username" autocomplete="username" /></label><label>密码<input v-model="loginForm.password" type="password" autocomplete="current-password" /></label><button class="primary wide" :disabled="loading">{{ loading ? '正在验证…' : '登录工作台' }} <ArrowUpRight :size="17" /></button><p v-if="error" class="error-text">{{ error }}</p><div class="login-note"><ShieldCheck :size="16" /> 所有状态变化均保留审计事件</div></form>
-  </div>
-  <div v-else class="app-shell">
-    <aside class="sidebar"><div class="brand"><div class="brand-icon"><Sparkles :size="17" /></div><div><strong>Signal</strong><span>sales ops console</span></div></div><div class="sidebar-label">工作台</div><button :class="['nav-item', { active: view === 'overview' }]" @click="navigate('overview')"><LayoutDashboard :size="17" /> 总览 <span>⌘ 1</span></button><button :class="['nav-item', { active: view === 'sales' }]" @click="navigate('sales')"><MessageSquareMore :size="17" /> 销售澄清 <span v-if="sessions.length">{{ sessions.length }}</span></button><button v-if="isReviewer" :class="['nav-item', { active: view === 'review' }]" @click="navigate('review')"><ShieldCheck :size="17" /> 负责人审核 <span v-if="proposals.length">{{ proposals.length }}</span></button><div class="sidebar-bottom"><div class="user-chip"><div class="avatar">{{ (auth.display_name || auth.username).slice(0, 1).toUpperCase() }}</div><div><strong>{{ auth.display_name || auth.username }}</strong><span>{{ roleLabel }}</span></div><button @click="logout" title="退出"><LogOut :size="15" /></button></div></div></aside>
-    <main class="main"><header class="topbar"><div><span class="breadcrumb">SALES SIGNAL</span><span class="slash">/</span><span>{{ view === 'review' ? '负责人审核' : view === 'sales' ? '销售澄清' : '工作总览' }}</span></div><button class="refresh" @click="loadData"><RefreshCw :class="{ spinning: loading }" :size="16" /> 刷新数据</button></header><div v-if="error" class="flash error-flash"><CircleAlert :size="17" /> {{ error }}</div><div v-if="notice" class="flash success-flash"><Check :size="17" /> {{ notice }}</div>
-      <section v-if="view === 'overview'" class="content"><div class="hero-row"><div><div class="eyebrow">{{ new Date().toLocaleDateString('zh-CN', { weekday: 'long', month: 'long', day: 'numeric' }) }}</div><h1>早上好，{{ auth.display_name || auth.username }}。</h1><p class="lede">今天先处理最接近业务结果的事实。</p></div><button class="primary" @click="navigate('sales')">提交一条纪要 <ArrowUpRight :size="17" /></button></div><div class="metric-grid"><div class="metric-card accent"><span>待澄清会话</span><strong>{{ sessions.filter(s => s.status === 'open').length }}</strong><small>需要销售补充事实</small></div><div class="metric-card"><span>我的会话</span><strong>{{ sessions.length }}</strong><small>所有追加记录可回放</small></div><div v-if="isReviewer" class="metric-card warning"><span>待负责人确认</span><strong>{{ proposals.length }}</strong><small>状态不会自动跳转</small></div><div class="metric-card dark"><span>安全边界</span><strong>100%</strong><small>事实需人工确认</small></div></div><div class="split-grid"><div class="panel"><div class="panel-head"><div><span class="eyebrow">RECENT SIGNALS</span><h3>最近澄清会话</h3></div><button class="link-btn" @click="navigate('sales')">查看全部 <ChevronRight :size="15" /></button></div><div v-if="sessions.length" class="signal-list"><button v-for="session in sessions.slice(0, 5)" :key="session.session_id" class="signal-row" @click="openSession(session.session_id)"><div class="signal-dot" :class="session.status"></div><div class="signal-main"><strong>{{ session.customer_id }}</strong><span>{{ session.session_id }}</span></div><div class="signal-status">{{ statusLabel(session.status) }}</div><ChevronRight :size="16" /></button></div><div v-else class="empty">提交第一条纪要，建立你的事实时间线。</div></div><div class="quote-card"><div class="quote-mark">“</div><p>成熟的 Agent，不是能做最多事情的那个，而是在明确的边界里，能稳定完成正确事情的那个。</p><span>— 产品原则 / 01</span></div></div></section>
-      <section v-else-if="view === 'sales'" class="content"><div class="page-title"><div><div class="eyebrow">FIELD NOTES → VERIFIED FACTS</div><h1>销售澄清</h1><p class="lede">把一次洽谈交给 Agent，销售只回答真正会改变判断的问题。</p></div></div><div class="sales-grid"><div class="panel intake-panel"><div class="panel-head"><div><span class="eyebrow">NEW INTAKE</span><h3>提交洽谈纪要</h3></div><FileText :size="20" class="panel-icon" /></div><form @submit.prevent="submitIntake"><div class="field-row"><label>客户脱敏标识<input v-model="intakeForm.customer_id" required placeholder="customer-demo-001" /></label><label>幂等标识<input v-model="intakeForm.idempotency_key" required placeholder="同一份纪要重试时保持不变" /></label></div><div class="field-row"><label>洽谈时间<input v-model="intakeForm.occurred_at" type="datetime-local" required /></label><label>记录来源<select v-model="intakeForm.source_type"><option value="meeting_note">会后纪要</option><option value="transcript">会议转写</option><option value="chat_summary">聊天摘要</option></select></label></div><div class="content-field"><div class="content-label"><span>纪要正文</span><button type="button" class="link-btn" @click.prevent="pickFile"><Upload :size="14" /> 从文件导入</button></div><input ref="fileInput" class="file-input" type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" @change="readFileIntoContent" /><textarea v-model="intakeForm.content" required minlength="10" placeholder="从本地 .md / .txt 纪要导入，或直接粘贴。只提交已脱敏的中文洽谈事实。"></textarea><p v-if="importedFile" class="file-chip"><FileText :size="14" /><span>{{ importedFile.name }} · {{ (importedFile.size / 1024).toFixed(1) }}KB 已载入正文，请过目后提交</span><button type="button" @click="clearImportedFile">移除</button></p><p v-if="fileError" class="error-text">{{ fileError }}</p></div><div class="guardrail"><ShieldCheck :size="17" /><span>提交前自动检查敏感信息、Prompt injection 与数字隔离。精确数值不会进入 Agent 上下文。</span></div><button class="primary" :disabled="loading">提交并进入澄清 <ArrowUpRight :size="17" /></button></form></div><div class="panel session-panel"><div class="panel-head"><div><span class="eyebrow">MY SESSIONS</span><h3>我的澄清会话</h3></div><Clock3 :size="20" class="panel-icon" /></div><div class="session-picker" v-if="sessions.length"><button v-for="s in sessions" :key="s.session_id" :class="['session-item', { selected: selectedSession?.session_id === s.session_id }]" @click="openSession(s.session_id)"><div><strong>{{ s.customer_id }}</strong><span>{{ s.session_id }}</span></div><b>{{ statusLabel(s.status) }}</b></button></div><div v-else class="empty">还没有会话。</div><div v-if="selectedSession" class="session-detail"><div class="detail-head"><span>{{ selectedSession.conversation_id }}</span><b :class="['pill', selectedSession.status]">{{ statusLabel(selectedSession.status) }}</b></div><article v-for="turn in selectedSession.turns" :key="turn.turn_id" class="turn"><div class="turn-label">第 {{ turn.turn_no }} 轮 · {{ turn.question_count }} 个问题</div><div v-if="turn.agent_output?.claims?.length" class="claims"><div v-for="claim in turn.agent_output.claims" :key="claim.id" class="claim"><span class="claim-type">{{ claim.type }}</span><p>{{ claim.value }}</p><small>{{ claim.attribution }} · {{ claim.certainty }}</small></div></div><div v-for="question in turn.agent_output?.questions || []" :key="question.id" class="question"><div><span>需要确认</span><strong>{{ question.question }}</strong></div><div v-if="selectedSession.answers?.some(a => a.question_id === question.id)" class="answered">已追加回答</div><div v-else class="answer-box"><input v-model="answerDrafts[question.id]" placeholder="用一句话补充你确定的事实" @keyup.enter="sendAnswer(turn, question)" /><button @click="sendAnswer(turn, question)"><ArrowUpRight :size="16" /></button></div></div><div class="turn-meta">输入 {{ turn.input_tokens || 0 }} tokens · 输出 {{ turn.output_tokens || 0 }} tokens · {{ turn.latency_ms || 0 }} ms</div></article></div></div></div></section>
-      <section v-else class="content"><div class="page-title"><div><div class="eyebrow">RESULTS BEFORE PROCESS</div><h1>负责人审核</h1><p class="lede">先看建议状态、风险和下一步；需要时展开证据与时间线。</p></div></div><div class="review-layout"><div class="proposal-list panel"><div class="panel-head"><div><span class="eyebrow">PENDING DECISIONS</span><h3>待确认建议</h3></div><span class="count-badge">{{ proposals.length }}</span></div><button v-for="proposal in proposals" :key="proposal.proposal_id" :class="['proposal-row', { selected: selectedProposal?.proposal_id === proposal.proposal_id }]" @click="openProposal(proposal)"><div class="proposal-state">{{ stateLabel(proposal.proposed_state) }}</div><div class="proposal-copy"><strong>{{ proposal.customer_id }}</strong><span>{{ proposal.reasoning_summary || '等待负责人查看证据' }}</span></div><div class="confidence">{{ Math.round(Number(proposal.confidence) * 100) }}%</div></button><div v-if="!proposals.length" class="empty">暂无待确认建议。</div></div><div class="proposal-detail panel" v-if="selectedProposal"><div class="detail-head"><div><span class="eyebrow">DECISION BRIEF</span><h2>{{ stateLabel(selectedProposal.proposed_state) }}</h2><p>{{ selectedProposal.customer_id }} · {{ selectedProposal.proposal_id }}</p></div><div class="confidence-ring">{{ Math.round(Number(selectedProposal.confidence) * 100) }}<small>%</small></div></div><div class="brief-summary"><span>判断摘要</span><p>{{ selectedProposal.reasoning_summary || '—' }}</p></div><div class="brief-summary"><span>下一步动作</span><p>{{ selectedProposal.next_action || '—' }}</p></div><div v-if="selectedProposal.risk_flags?.length" class="risk-box"><CircleAlert :size="17" /><div><strong>风险提示</strong><p>{{ selectedProposal.risk_flags.join('、') }}</p></div></div><details open><summary>证据引用 <ChevronRight :size="15" /></summary><pre>{{ JSON.stringify(selectedProposal.evidence_refs || [], null, 2) }}</pre></details><div class="decision-actions"><button class="primary" @click="decide('approved')"><Check :size="16" />确认状态</button><button class="secondary" @click="decide('rejected')">驳回</button></div></div><div v-else class="proposal-detail panel empty-detail"><Sparkles :size="30" /><h3>选择一条建议</h3><p>老板只看结果，但每个结果都能回到证据。</p></div></div></section>
-    </main>
-  </div>
+  <LoginPage v-if="!auth" @authenticated="(res, username) => { setAuth(res, username); view = 'overview' }" />
+
+  <el-container v-else class="app-shell">
+    <el-aside width="232px" class="sidebar">
+      <div class="brand">
+        <div class="brand-icon"><Document /></div>
+        <div>
+          <strong>LLM Wiki</strong>
+          <span>knowledge console</span>
+        </div>
+      </div>
+
+      <el-input
+        v-model="searchQuery"
+        placeholder="搜索知识库"
+        :prefix-icon="Search"
+        clearable
+        class="sidebar-search"
+        @keyup.enter="doSearch"
+      />
+
+      <el-scrollbar class="nav-scroll">
+        <template v-for="group in groups" :key="group">
+          <div class="nav-group">{{ group }}</div>
+          <div
+            v-for="item in visibleNav.filter((n) => n.group === group)"
+            :key="item.key"
+            :class="['nav-item', { active: view === item.key }]"
+            @click="view = item.key"
+          >
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.label }}</span>
+          </div>
+        </template>
+      </el-scrollbar>
+
+      <div class="sidebar-foot">
+        <el-button
+          v-if="isAdmin"
+          :loading="rebuildLoading"
+          :icon="Refresh"
+          size="small"
+          class="foot-btn"
+          @click="rebuildIndex"
+        >重建索引</el-button>
+        <div class="user-chip">
+          <div class="avatar">{{ (auth.display_name || auth.username).slice(0, 1).toUpperCase() }}</div>
+          <div class="user-meta">
+            <strong>{{ auth.display_name || auth.username }}</strong>
+            <span>{{ roleLabel }}</span>
+          </div>
+          <el-tooltip content="退出登录" placement="top">
+            <el-button :icon="SwitchButton" size="small" text @click="logout" />
+          </el-tooltip>
+        </div>
+      </div>
+    </el-aside>
+
+    <el-container>
+      <el-header class="topbar">
+        <div class="crumbs">
+          <span class="crumb-brand">LLM WIKI</span>
+          <span class="slash">/</span>
+          <span>{{ visibleNav.find((n) => n.key === view)?.label }}</span>
+        </div>
+      </el-header>
+
+      <el-main class="main">
+        <OverviewPage v-if="view === 'overview'" :auth="auth" :is-reviewer="isReviewer" @go="(v) => (view = v)" />
+        <MyKbPage v-else-if="view === 'my-kb'" @go="(v) => (view = v)" />
+        <BrowsePage v-else-if="view === 'browse'" :initial-query="searchQuery" />
+        <UploadPage v-else-if="view === 'upload'" @go="(v) => (view = v)" />
+        <ReviewPage v-else-if="view === 'review'" :is-reviewer="isReviewer" />
+        <GrowthPage v-else-if="view === 'growth'" />
+        <ObservabilityPage v-else-if="view === 'observability'" />
+        <SalesPage v-else-if="view === 'sales'" />
+        <CustomerStatePage v-else-if="view === 'customer'" :is-reviewer="isReviewer" />
+      </el-main>
+    </el-container>
+  </el-container>
 </template>
+
+<style scoped>
+.app-shell { min-height: 100vh; }
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 14px 14px;
+  border-right: 1px solid var(--el-border-color);
+  background: #0d1726;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 20px; }
+.brand-icon {
+  display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: 9px;
+  background: var(--el-color-primary); color: #062225;
+  font-size: 18px;
+}
+.brand strong { display: block; font-size: 15px; color: #e7f5f4; }
+.brand span { display: block; margin-top: 2px; font-size: 10px; letter-spacing: .08em; color: #7187a6; text-transform: uppercase; }
+
+.sidebar-search { margin-bottom: 14px; }
+:deep(.sidebar-search .el-input__wrapper) { background: rgba(7, 16, 29, .72); }
+
+.nav-scroll { flex: 1; min-height: 0; }
+.nav-group {
+  padding: 14px 10px 6px;
+  font-size: 10px; letter-spacing: .15em; text-transform: uppercase; color: #657b99;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  margin: 2px 0; padding: 9px 11px;
+  border-radius: 8px; cursor: pointer;
+  color: #91a5c0; font-size: 13px;
+  transition: background .15s, color .15s;
+}
+.nav-item:hover { color: #e7f5f4; background: rgba(64, 158, 255, .1); }
+.nav-item.active { color: #e7f5f4; background: rgba(64, 158, 255, .16); box-shadow: inset 2px 0 0 var(--el-color-primary); }
+
+.sidebar-foot { padding-top: 12px; border-top: 1px solid var(--el-border-color); }
+.foot-btn { width: 100%; margin-bottom: 10px; }
+.user-chip { display: flex; align-items: center; gap: 9px; padding: 4px; }
+.avatar {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--el-color-warning); color: #08212a;
+  font-size: 12px; font-weight: 800;
+}
+.user-meta { flex: 1; min-width: 0; }
+.user-meta strong { display: block; font-size: 12px; color: #d7e1ee; }
+.user-meta span { display: block; margin-top: 2px; font-size: 11px; color: #7890ae; }
+
+.topbar {
+  display: flex; align-items: center;
+  height: 62px;
+  border-bottom: 1px solid var(--el-border-color);
+}
+.crumbs { font-size: 13px; color: #a7b8cd; }
+.crumb-brand { color: var(--el-color-primary); font-size: 11px; font-weight: 700; letter-spacing: .15em; }
+.slash { margin: 0 10px; color: #526984; }
+
+.main { padding: 26px 30px 60px; }
+</style>

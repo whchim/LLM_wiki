@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SHARED = ROOT / "streamlit_app"
+SHARED = ROOT / "core"
 if str(SHARED) not in sys.path:
     sys.path.insert(0, str(SHARED))
 

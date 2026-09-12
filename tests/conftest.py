@@ -21,12 +21,14 @@ import pytest
 import psycopg
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core"))
 
 
 # 测试库连接参数（与生产 llmwiki 区分，避免污染）
+# host 默认 127.0.0.1 而非 localhost：Windows 上 localhost 会先解析到 IPv6，
+# 而 Docker 只发布 IPv4，导致每次连接多等 2-5 秒（实测 5202ms vs 49ms）。
 TEST_DB = {
-    "host": os.environ.get("DB_HOST", "localhost"),
+    "host": os.environ.get("DB_HOST", "127.0.0.1"),
     "port": os.environ.get("DB_PORT", "5432"),
     "dbname": os.environ.get("TEST_DB_NAME", "llmwiki_test"),
     "user": os.environ.get("DB_USER", "llmwiki"),

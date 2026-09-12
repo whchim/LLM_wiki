@@ -10,7 +10,7 @@
 
 销售手工填写客户需求、客户承诺、时间、下一步、证据备注和候选状态。缺任一核心字段即转人工。`field_count` 和固定 `operation_count` 用于衡量销售负担。
 
-实现：`streamlit_app/sales_baselines.py::run_structured_form_baseline`。
+实现：`core/sales_baselines.py::run_structured_form_baseline`。
 
 ## 3. 关键词规则基线
 
@@ -22,7 +22,7 @@
 - 缺少状态所需事实或出现否定表达时转人工；
 - 不猜测同义表达，不生成追问，不调用 LLM。
 
-实现：`streamlit_app/sales_baselines.py::run_keyword_rule_baseline`。
+实现：`core/sales_baselines.py::run_keyword_rule_baseline`。
 
 ## 4. 统一结果
 

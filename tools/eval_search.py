@@ -24,8 +24,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-# search_router 内部 `import db` 指向 streamlit_app/（与 api/main.py 相同的兜底）
-_SHARED = ROOT / "streamlit_app"
+# search_router 内部 `import db` 指向 core/（与 api/main.py 相同的兜底）
+_SHARED = ROOT / "core"
 if str(_SHARED) not in sys.path:
     sys.path.insert(0, str(_SHARED))
 

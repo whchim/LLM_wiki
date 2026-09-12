@@ -41,7 +41,7 @@
 | 流式上传 | `UploadFile`（内存+落盘 RAW） | 复用 ops.py 现有校验/落盘逻辑，保持行为一致 |
 | API 与 Claude Code 边界 | API **不调用 LLM**；编译触发仍写 `_triggers/` 触发文件（Claude Code 消费） | 沿用「Claude Code 掌 LLM」架构原则，SP2 不重造 Agent 编排 |
 
-**关键架构约束**：FastAPI 复用 `streamlit_app/db.py` + `ops.py`（数据层与业务逻辑 GoVerned 层不动），只在其上包 HTTP 层。目录更名考虑：把 `streamlit_app/` 保留（Streamlit 仍在），新增 `api/` 目录存放 FastAPI 应用——`db.py`/`ops.py`/`rules.py` 作为共享模块被两方引用（通过 sys.path 或打包为 `llmwiki_core`）。本设计采用**轻量共享方案**：api 应用直接引用 `streamlit_app/` 下模块（同仓库，Python 路径注入，不引入包结构重构）。
+**关键架构约束**：FastAPI 复用 `core/db.py` + `ops.py`（数据层与业务逻辑 GoVerned 层不动），只在其上包 HTTP 层。目录更名考虑：把 `core/` 保留（Streamlit 仍在），新增 `api/` 目录存放 FastAPI 应用——`db.py`/`ops.py`/`rules.py` 作为共享模块被两方引用（通过 sys.path 或打包为 `llmwiki_core`）。本设计采用**轻量共享方案**：api 应用直接引用 `core/` 下模块（同仓库，Python 路径注入，不引入包结构重构）。
 
 ## 3. 目录与文件变更
 
@@ -59,7 +59,7 @@
 │       ├── review_router.py     # GET/POST /reviews 系列（审核者/管理员）
 │       ├── search_router.py     # GET /search, GET /search/missed
 │       └── admin_router.py      # POST /admin/rebuild-index（管理员）
-├── streamlit_app/
+├── core/
 │   ├── app.py                   # 🔄 增加登录态；未登录跳登录页
 │   ├── api_client.py            # 新增：Streamlit→API 的 HTTP 客户端（带 JWT）
 │   ├── login.py                 # 新增：登录页（用户名/密码 → /auth/login）
@@ -179,7 +179,7 @@ def require_roles(*roles) -> Dependency:   # 工厂：返回检查角色的依�
 
 ### 7.1 登录态
 
-- `streamlit_app/login.py`：登录表单 → 调 `POST /auth/login` → 成功将 `{token, role, display_name}` 存入 `st.session_state["auth"]`。
+- `core/login.py`：登录表单 → 调 `POST /auth/login` → 成功将 `{token, role, display_name}` 存入 `st.session_state["auth"]`。
 - `app.py` 启动检查：无 auth → 渲染登录页并停止；有 auth → 加载主界面，侧边栏显示当前用户+角色+[退出登录]。
 - 用 `st.rerun()` 处理登录切换；JWT 存 session_state（不进 browser cookie，避免 XSS 面）。
 

@@ -87,10 +87,10 @@
 |---|------|------|------|------|------|---------|
 | 1 | Obsidian | 用户本机应用 | 知识浏览、搜索、图谱 | 用户 | 用户 | 手动打开 |
 | 2 | Claude Code | 用户本机终端 | 编译/审核/问答 Agent 执行 | Claude Code | 用户 | SessionStart hook、手动命令 |
-| 3 | Streamlit 上传页 | `streamlit_app/upload.py` | 文件上传、编译触发、任务状态 | 用户交互 | 用户 | 浏览器 |
-| 4 | Streamlit 审核页 | `streamlit_app/review.py` | AI 判定展示、人工通过/驳回 | 用户交互 | 用户 | 浏览器 |
-| 5 | Streamlit 看板页 | `streamlit_app/growth.py` | 知识缺口 Top 20、周报展示 | 用户交互 | 用户 | 浏览器 |
-| 6 | db.py | `streamlit_app/db.py` | SQLite 全部读写封装 | Streamlit 页面 | Streamlit 页面 | 函数调用 |
+| 3 | Streamlit 上传页 | `core/upload.py` | 文件上传、编译触发、任务状态 | 用户交互 | 用户 | 浏览器 |
+| 4 | Streamlit 审核页 | `core/review.py` | AI 判定展示、人工通过/驳回 | 用户交互 | 用户 | 浏览器 |
+| 5 | Streamlit 看板页 | `core/growth.py` | 知识缺口 Top 20、周报展示 | 用户交互 | 用户 | 浏览器 |
+| 6 | db.py | `core/db.py` | SQLite 全部读写封装 | Streamlit 页面 | Streamlit 页面 | 函数调用 |
 | 7 | init.sh | `init.sh` | Vault 初始化 + 建表 | 开发者 | 开发者 | 手动执行 |
 | 8 | SQLite | `vault/meta.db` | 元数据缓存 + 过程数据 | Streamlit、Claude Code | 同上 | — |
 | 9 | 触发文件 | `vault/_triggers/*.md` | 编译/审核信号 | Streamlit | Claude Code | Streamlit 写、Claude Code 扫描 |
@@ -148,7 +148,7 @@ llm-wiki-demo/                      # 项目根目录（Claude Code 工作目录
 │   └── commands/
 │       ├── process-triggers.md     # /process-triggers：处理触发队列
 │       └── ask.md                  # /ask <问题>：检索+问答
-├── streamlit_app/
+├── core/
 │   ├── app.py                      # 入口：侧边栏 + 页面路由
 │   ├── db.py                       # SQLite 操作封装（唯一入口）
 │   ├── upload.py                   # 上传页
@@ -296,9 +296,9 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY streamlit_app/ ./streamlit_app/
+COPY core/ ./core/
 EXPOSE 8501
-CMD ["streamlit", "run", "streamlit_app/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "core/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
 ```
 
 **设计要点**：

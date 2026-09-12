@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "streamlit_app"))
+sys.path.insert(0, str(Path(__file__).parents[1] / "core"))
 
 from sales_baselines import run_keyword_rule_baseline, run_structured_form_baseline
 

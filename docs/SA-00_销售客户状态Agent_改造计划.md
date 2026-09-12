@@ -136,7 +136,7 @@ AI 提取客户状态、证据和下一步行动
 **实现记录**：
 
 - `schema.sql` 新增客户、洽谈、证据、建议、决定、事件、当前投影和敏感数值表；
-- `streamlit_app/customer_state.py` 实现状态转移、幂等创建、建议/决定分层、过期、撤回和历史查询；
+- `core/customer_state.py` 实现状态转移、幂等创建、建议/决定分层、过期、撤回和历史查询；
 - `tests/test_customer_state.py` 覆盖幂等、建议隔离、确认写入、非法转移、驳回、过期撤回和密文约束；
 - `tests/test_schema.py`、`tests/test_ensure_schema.py` 已同步新增表断言。
 
@@ -171,7 +171,7 @@ AI 提取客户状态、证据和下一步行动
 
 **实现记录**：
 
-- `streamlit_app/sales_preprocess.py`：校验必填字段、脱敏客户标识、中文范围、长度、时区和未来时间窗口；
+- `core/sales_preprocess.py`：校验必填字段、脱敏客户标识、中文范围、长度、时区和未来时间窗口；
 - 检测明显 Prompt injection/越权指令，命中即隔离，不调用 Agent；
 - 对金额、预算、折扣、报价和数量生成稳定引用与粗粒度比较区间；
 - 未提供受控加密器时，含敏感数值的记录禁止进入 Agent；提供加密器时，返回脱敏正文和受控密文引用；
@@ -219,7 +219,7 @@ AI 提取客户状态、证据和下一步行动
 
 **实现记录**：
 
-- `streamlit_app/sales_state_agent.py`：拒绝非 JSON、未知字段、客户上下文不一致、非法状态转移和不可定位证据；
+- `core/sales_state_agent.py`：拒绝非 JSON、未知字段、客户上下文不一致、非法状态转移和不可定位证据；
 - 校验置信度、人工确认标识、`won` 强制人工确认、风险标识、有效期以及模型/Prompt 版本；
 - `create_proposal_from_agent_output` 只创建 `StateProposal`，不会更新 `CurrentState` 或写入 `StateEvent`；
 - 输出校验失败时在写库前抛出错误，调用方应将记录转入人工处理，不做无限重试；
@@ -268,8 +268,8 @@ AI 提取客户状态、证据和下一步行动
 - `reviewer/admin` 可以确认、修改、驳回和撤回，普通 `user` 无法执行写操作；
 - 修改确认必须同时说明最终状态和原因；驳回、撤回必须填写原因；
 - 每次负责人决定或撤回均写入审计日志与 trace，业务事实仍由 `StateEvent` 驱动；
-- `streamlit_app/customer_state_page.py`：首屏突出建议状态、置信度、风险和下一步，证据按需展开；
-- `streamlit_app/api_client.py`、`streamlit_app/app.py` 已接入负责人工作台；
+- `core/customer_state_page.py`：首屏突出建议状态、置信度、风险和下一步，证据按需展开；
+- `core/api_client.py`、`core/app.py` 已接入负责人工作台；
 - `tests/test_api_customer_state.py` 覆盖角色门禁、确认写入、事件历史、审计、撤回和修改输入约束。
 
 **阶段 5 验收结果**：客户状态 API、领域服务、预处理和输出契约相关测试 `26/26` 通过。由于受限环境无法写入部分 `__pycache__` 文件，Python 编译验证采用 pytest 导入与执行覆盖；`git diff --check` 待最终专项检查。

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core"))
 
 # conftest 的 autouse _env 已在每个测试前重载 db 并重置测试库 schema
 import db

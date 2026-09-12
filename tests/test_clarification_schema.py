@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "streamlit_app"))
+sys.path.insert(0, str(Path(__file__).parents[1] / "core"))
 
 from clarification_schema import parse_clarification_output, validate_clarification_output
 

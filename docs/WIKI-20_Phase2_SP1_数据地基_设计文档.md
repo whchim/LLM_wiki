@@ -10,13 +10,13 @@
 
 ## 1. 目标与范围
 
-**目标**：把 Demo 的数据层（SQLite 文件 + `streamlit_app/db.py`）整体迁移到 PostgreSQL 16 + pgvector 扩展，保持「YAML 为规范数据源、数据库为缓存」铁律，为多用户、向量检索、审计奠定基础。
+**目标**：把 Demo 的数据层（SQLite 文件 + `core/db.py`）整体迁移到 PostgreSQL 16 + pgvector 扩展，保持「YAML 为规范数据源、数据库为缓存」铁律，为多用户、向量检索、审计奠定基础。
 
 **范围内**：
 - 4 张现有表（knowledge_entries / compile_tasks / pending_reviews / search_logs）迁至 PG
 - 提前建 4 张 Phase 2 新增表中的 3 张（audit_logs / contributors / conflicts；health_reports 留待 SP5 用到时按需建）——建表即可，行为逻辑在对应 SP 实现
 - pgvector 扩展 + 预留向量列（SP4 用）
-- `streamlit_app/db.py` 全部函数改写为 psycopg3，SQL 语义等价迁移
+- `core/db.py` 全部函数改写为 psycopg3，SQL 语义等价迁移
 - Docker Compose 新增 PostgreSQL 服务；Dockerfile/Compose 接线
 - 测试从 SQLite 全面迁到真实 PostgreSQL
 - **一次性旧数据导入脚本**（第 8 节：知识条目 YAML 重建 + 操作历史 dump→import）
@@ -42,7 +42,7 @@
 ├── docker-compose.yml         # 🔄 新增 db 服务（postgres:16 镜像 + pgvector 扩展初始化脚本）
 ├── Dockerfile                 # 🔄 requirements.txt 增加 psycopg；仍 COPY schema.sql
 ├── init.sh                    # 🔄 sqlite3 CLI 建表 → 保留目录自愈 + 说明/可选 PG 初始化入口
-├── streamlit_app/
+├── core/
 │   ├── db.py                  # 🔄 SQLite → psycopg3 全量改写（接口签名不变）
 │   └── upload.py              # 🔄 97-100 行直接 SQL 改走 db API（或 psycopg 等价）
 ├── vault/                     # ⚠ meta.db 退役；保留 vault 目录（Obsidian 内容）
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS conflicts (
 | `?` 占位符 | `%s` 占位符 | db.py 全部 |
 | `PRAGMA journal_mode=WAL / busy_timeout` | 连接/池参数（PG 无需） | get_conn |
 
-## 5. 数据层改写（streamlit_app/db.py）
+## 5. 数据层改写（core/db.py）
 
 **接口签名保持不变**（36 个函数/工具对外服务正依赖），仅替换内部实现：
 

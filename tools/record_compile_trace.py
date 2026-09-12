@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core"))
 
 import db  # 复用连接池 + 环境变量（DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASS）
 

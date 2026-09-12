@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台）。**pytest 收集 203 个用例** + CI（测试 + Prompt 退化检测）+ LLM 输出契约校验。
 
-**快速启动**：`bash init.sh && docker compose up -d`（三容器：`db`=PostgreSQL 16+pgvector、`api`=FastAPI、`streamlit`=管理台；容器启动自愈建目录/表/初始管理员，幂等）。知识浏览用 Obsidian 打开 `vault/`；Vue 3 工作台单独 `cd frontend && npm run dev`（:5173，与 Streamlit 共用 API）。
+**快速启动**：`bash init.sh && docker compose up -d`（三容器：`db`=PostgreSQL 16+pgvector、`api`=FastAPI、`web`=Vue 工作台（nginx 托管 + `/api` 反代）；容器启动自愈建目录/表/初始管理员，幂等）。工作台 `:8501`；开发态前端 `cd frontend && npm run dev`（:5173，Vite 代理到 :8000）。知识浏览：工作台「全部条目」页在线预览正文，图谱用 Obsidian 打开 `vault/`。
 
 **测试**：`python -m pytest tests -q`。需真实 PostgreSQL（`docker compose up -d db`，测试库 `llmwiki_test`）；无 PG 可用 `PYTEST_SKIP_NO_DB=1` 跳过。隔离目录固定为 `tests/_isolated/`（conftest 覆盖 tmp_path，不依赖系统 %TEMP%），在受限沙箱/CI 环境同样可跑。**CI（GitHub Actions，`.github/workflows/ci.yml`）**：push/PR 触发，起 pgvector service 跑全量测试 + `tools/prompt_regression.py` 退化检测。**检索回归门禁仅本地**：黄金集（docs/VAL-03_检索评测_黄金集.md，基于真实业务内容）为本地面试资产、不进公开仓库，改检索/融合逻辑后本地跑 `python tools/eval_search.py --check`。
 
@@ -52,9 +52,9 @@ Obsidian（知识界面+浏览） ←文件系统→ vault/（Markdown，YAML Fr
      ↑ Bash 工具                      ↑ Python
 Claude Code（引擎：编译/审核/问答 3 Agent）
 watcher（tools/trigger_watcher.py：轮询触发 → headless 唤起 Claude Code，全自动）
-Streamlit（管理台，JWT 登录） ←HTTP→ api/（FastAPI）→ PostgreSQL 16 + pgvector（缓存）
+Vue 工作台（nginx 托管 + /api 反代） ←HTTP→ api/（FastAPI）→ PostgreSQL 16 + pgvector（缓存）
 
-【销售层】Vue 3 工作台(:5173) / Streamlit 页面 ─┐
+【应用层】Vue 工作台同一前端（知识域 + 销售域）─┐
                                                 ├─HTTP→ api/（同一 FastAPI，同一套 JWT/审计）
        澄清会话（clarification_sessions/turns/answers）
                           ↓
@@ -65,9 +65,10 @@ Streamlit（管理台，JWT 登录） ←HTTP→ api/（FastAPI）→ PostgreSQL
    sensitive_numeric_values（金额等精确值独立受限表，正文只留 [AMOUNT_REF:nv-001] 占位符）
 ```
 
-- **Claude Code 是知识层唯一 LLM 引擎**：通过 Bash 工具直接操作 Vault；watcher 全自动消费触发队列（`claude -p` headless），SessionStart hook `/process-triggers` 为手动兜底。**销售层不依赖它**——销售 Agent 的模型调用走 `streamlit_app/sales_*` 与 `api/routers/*` 内的调用层（见 SA-13）
-- **后端演进**：Demo 期论证"无后端"（单用户、schema 稳定）；SP2 起为认证/审计/向量检索/多用户上 FastAPI REST API + JWT（PyJWT HS256 + argon2），Streamlit 经 `ApiClient` 消费，不再直连库
-- **PostgreSQL 是缓存不是权威**：YAML Frontmatter 是规范数据源，任何状态变更必须双写（YAML + PG），不一致时文件为准；向量 embedding 同为可重建缓存（backfill 全量重算）。**销售层例外**：销售证据/状态事件的事实权威在 PG（事务 + 状态机约束 + 幂等键），不在 Markdown
+- **Claude Code 是知识层唯一 LLM 引擎**：通过 Bash 工具直接操作 Vault；watcher 全自动消费触发队列（`claude -p` headless），SessionStart hook `/process-triggers` 为手动兜底。**应用层不依赖它**——销售 Agent 的模型调用走 `core/sales_*` 与 `api/routers/*` 内的调用层（见 SA-13）
+- **界面统一为 Vue 3**（`frontend/`，Element Plus）：原 Streamlit 管理台已退役删除；`core/` 只保留被 API 与工具链复用的业务逻辑（数据层/规则/领域模型），不含任何界面代码
+- **后端演进**：Demo 期论证"无后端"（单用户、schema 稳定）；SP2 起为认证/审计/向量检索/多用户上 FastAPI REST API + JWT（PyJWT HS256 + argon2），前端经 REST 消费，不直连库
+- **PostgreSQL 是缓存不是权威**：YAML Frontmatter 是规范数据源，任何状态变更必须双写（YAML + PG），不一致时文件为准；向量 embedding 同为可重建缓存（backfill 全量重算）。**应用层例外**：销售证据/状态事件的事实权威在 PG（事务 + 状态机约束 + 幂等键），不在 Markdown
 
 ## 关键机制
 
@@ -75,11 +76,11 @@ Streamlit（管理台，JWT 登录） ←HTTP→ api/（FastAPI）→ PostgreSQL
 - **销售状态机**：7 状态（`new_lead`/`contacted`/`need_confirmed`/`solution_eval`/`commercial_negotiation`/`won`/`lost_or_paused`），每状态有最低证据要求与默认有效期；证据不足必须输出 `needs_review` 不得猜测；`won` 需强证据；撤回/更正/过期均**追加新事件**，不删除历史
 - **澄清优先于猜测**：销售事实澄清 Agent 在信息不足时先按 SA-11 契约追问（槽位 + 追问规则），而不是直接给状态建议
 - **敏感数值分层**：正文占位符 + `sensitive_numeric_values` 受限表；Prompt/trace/普通日志/向量索引中不得出现精确金额；授权角色在审计下可恢复
-- **触发文件信号**：API/Streamlit 写 `vault/_triggers/compile_*.md` / `review_*.md`（原子写：tmp + mv），watcher 轮询消费（headless 唤起 Claude Code），处理后移入 `done/`；失败批处理补偿为 failed，不残留悬挂任务
-- **概念页审核流**：编译产物先入 `pending_review/`（status=pending）→ AI 六维度审核（确定性两维正则+代码、模糊四维 LLM）→ 人工在管理台通过/驳回 → 通过后移入 `NEXUS/概念/`（status=active）；资源摘要不过审直接发布
+- **触发文件信号**：API/工作台写 `vault/_triggers/compile_*.md` / `review_*.md`（原子写：tmp + mv），watcher 轮询消费（headless 唤起 Claude Code），处理后移入 `done/`；失败批处理补偿为 failed，不残留悬挂任务
+- **概念页审核流**：编译产物先入 `pending_review/`（status=pending）→ AI 六维度审核（确定性两维正则+代码、模糊四维 LLM）→ 人工在工作台通过/驳回 → 通过后移入 `NEXUS/概念/`（status=active）；资源摘要不过审直接发布
 - **混合检索（SP4）**：`/search` 双通道 grep+pgvector → 加权融合（0.5/0.3，后续以评测为准）；embedding 故障自动降级 grep-only。**改检索逻辑后必跑 `tools/eval_search.py`（黄金集 14 条：MRR@10/Recall@10/缺口检出力）**
 - **SHA256 指纹缓存**：同指纹的 done 记录存在则跳过 LLM 调用，标记 cached
-- **LLM 输出契约校验**：prompts 里的 JSON 契约代码化（`streamlit_app/output_schema.py` + `streamlit_app/clarification_schema.py`；详见 `docs/VAL-01_LLM_输出校验_设计说明.md`）。质量门禁已进 agent loop：review 写库前 / compile 落盘前先自检（`tools/validate_llm_output.py`，违例重试 1 次、再败不落地）；`/reviews` 响应含 `ai_scores_valid` 标记。**Prompt 退化检测**：`tools/prompt_regression.py`（契约短语存在性 + golden 样例回归，已在 CI）
+- **LLM 输出契约校验**：prompts 里的 JSON 契约代码化（`core/output_schema.py` + `core/clarification_schema.py`；详见 `docs/VAL-01_LLM_输出校验_设计说明.md`）。质量门禁已进 agent loop：review 写库前 / compile 落盘前先自检（`tools/validate_llm_output.py`，违例重试 1 次、再败不落地）；`/reviews` 响应含 `ai_scores_valid` 标记。**Prompt 退化检测**：`tools/prompt_regression.py`（契约短语存在性 + golden 样例回归，已在 CI）
 - **自增长**：搜索缺口写入 search_logs（判据 SP4 v0.1.2 已落地：grep 零命中 且 向量最高相似度 < τ=0.52，τ 由黄金集标定；向量不可用自动退化为 grep 零命中）→ 看板展示缺口 Top 20 → 驱动补文档
 
 ## 开发范式（PRD 第八章 + 销售 Agent 实践）

@@ -141,7 +141,7 @@
 - 追问停止条件、转人工条件和敏感信息规则；
 - 契约级单元测试。
 
-**完成记录（2026-09-09）**：新增 `SA-11_销售事实澄清Agent_事实与追问契约.md`、`streamlit_app/clarification_schema.py` 和 `tests/test_clarification_schema.py`。已固化事实类型、归因、确定性、状态最小证据矩阵、缺失事实、追问上限/敏感信息门禁、停止原因和 JSON 版本契约。当前仍不调用真实模型、不写客户状态。
+**完成记录（2026-09-09）**：新增 `SA-11_销售事实澄清Agent_事实与追问契约.md`、`core/clarification_schema.py` 和 `tests/test_clarification_schema.py`。已固化事实类型、归因、确定性、状态最小证据矩阵、缺失事实、追问上限/敏感信息门禁、停止原因和 JSON 版本契约。当前仍不调用真实模型、不写客户状态。
 
 **确认点 B**：负责人确认业务本体和追问边界后，才进入阶段 2。
 
@@ -156,7 +156,7 @@
 - 统一评测输入和 `BaselineResult`；
 - 基线测试与错误分析。
 
-**完成记录（2026-09-09）**：新增 `SA-12_销售事实澄清Agent_传统基线.md`、`streamlit_app/sales_baselines.py` 和 `tests/test_sales_baselines.py`。已实现结构化表单基线与关键词规则基线，统一返回 `BaselineResult`，覆盖字段负担、自由文本命中、精确证据、否定表达、缺失事实、状态机边界和转人工结果。当前仍不调用真实模型、不写客户状态。
+**完成记录（2026-09-09）**：新增 `SA-12_销售事实澄清Agent_传统基线.md`、`core/sales_baselines.py` 和 `tests/test_sales_baselines.py`。已实现结构化表单基线与关键词规则基线，统一返回 `BaselineResult`，覆盖字段负担、自由文本命中、精确证据、否定表达、缺失事实、状态机边界和转人工结果。当前仍不调用真实模型、不写客户状态。
 
 **确认点 C**：负责人确认基线足够公平后，才进入阶段 3。
 
@@ -173,7 +173,7 @@
 - token、耗时、错误和重试记录；
 - 模型调用的 mock 测试与受控集成测试。
 
-**完成记录（2026-09-09）**：新增 `SA-13_销售事实澄清Agent_模型调用契约.md`、`streamlit_app/sales_clarification_runtime.py`、`prompts/sales_clarification_prompt.md` 和 `tests/test_sales_clarification_runtime.py`。已实现可替换 `ModelPort`、脱敏上下文组装、严格 JSON 解析与阶段 1 契约复用、最多一次默认重试、输入/输出/token 上限、模型耗时与 token 摘要，以及失败转人工结果。运行时不会创建建议或修改客户状态。
+**完成记录（2026-09-09）**：新增 `SA-13_销售事实澄清Agent_模型调用契约.md`、`core/sales_clarification_runtime.py`、`prompts/sales_clarification_prompt.md` 和 `tests/test_sales_clarification_runtime.py`。已实现可替换 `ModelPort`、脱敏上下文组装、严格 JSON 解析与阶段 1 契约复用、最多一次默认重试、输入/输出/token 上限、模型耗时与 token 摘要，以及失败转人工结果。运行时不会创建建议或修改客户状态。
 
 **确认点 D**：负责人抽查 Agent 输出和失败样例后，才进入阶段 4。
 
@@ -189,7 +189,7 @@
 - 补充回答后重新提取事实并生成状态建议；
 - 全链路审计和幂等测试。
 
-**完成记录（2026-09-09）**：新增 `clarification_sessions`、`clarification_turns`、`clarification_answers` 三张 PostgreSQL 表及 `streamlit_app/db.py` 会话数据访问函数；新增 `streamlit_app/clarification_service.py`，将脱敏证据、阶段 3 运行时和轮次持久化连接；新增 `api/routers/clarification_router.py`、请求模型和 `ApiClient` 方法。已实现创建会话幂等、问题 ID 校验、回答追加、最多 2 轮追问、最后一轮自动转人工、角色权限、审计和 trace。当前仍不自动更新客户状态。
+**完成记录（2026-09-09）**：新增 `clarification_sessions`、`clarification_turns`、`clarification_answers` 三张 PostgreSQL 表及 `core/db.py` 会话数据访问函数；新增 `core/clarification_service.py`，将脱敏证据、阶段 3 运行时和轮次持久化连接；新增 `api/routers/clarification_router.py`、请求模型和 `ApiClient` 方法。已实现创建会话幂等、问题 ID 校验、回答追加、最多 2 轮追问、最后一轮自动转人工、角色权限、审计和 trace。当前仍不自动更新客户状态。
 
 **确认点 E**：负责人确认闭环行为后，才进入阶段 5。
 

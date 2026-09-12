@@ -1,6 +1,6 @@
 """上传路由：上传/编译任务列表/失败重试。
 
-复用 streamlit_app.ops.py 的上传校验与触发文件逻辑（共享模块），
+复用 core.ops.py 的上传校验与触发文件逻辑（共享模块），
 FastAPI 侧只做 HTTP 层 + 审计。
 """
 import os

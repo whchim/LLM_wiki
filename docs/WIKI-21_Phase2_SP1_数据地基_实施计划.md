@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 Demo 数据层（SQLite 文件 + `streamlit_app/db.py`）整体迁移到 PostgreSQL 16 + pgvector，保持「YAML 规范源 / 数据库缓存」铁律，为 SP2-SP5 铺统一数据底座。
+**Goal:** 把 Demo 数据层（SQLite 文件 + `core/db.py`）整体迁移到 PostgreSQL 16 + pgvector，保持「YAML 规范源 / 数据库缓存」铁律，为 SP2-SP5 铺统一数据底座。
 
-**Architecture:** PostgreSQL 16 独立服务（pgvector/pgvector:pg16 镜像）；`streamlit_app/db.py` 用同步 psycopg3 + `psycopg_pool.ConnectionPool` 改写，对外接口签名不变；Docker Compose 新增 `db` 服务 + `streamlit` depends_on healthy；测试连真实 PG（`docker compose up -d db`）。
+**Architecture:** PostgreSQL 16 独立服务（pgvector/pgvector:pg16 镜像）；`core/db.py` 用同步 psycopg3 + `psycopg_pool.ConnectionPool` 改写，对外接口签名不变；Docker Compose 新增 `db` 服务 + `streamlit` depends_on healthy；测试连真实 PG（`docker compose up -d db`）。
 
 **Tech Stack:** PostgreSQL 16 + pgvector、Python 3.11+、psycopg[binary] v3、psycopg_pool、Streamlit、Docker Compose。
 
@@ -116,7 +116,7 @@ psycopg_pool>=3.1
 ### Task 3: db.py 数据层改写为 psycopg3
 
 **Files:**
-- Modify: `streamlit_app/db.py`（内部全改，接口不变）
+- Modify: `core/db.py`（内部全改，接口不变）
 
 **Interfaces:**
 - Consumes: Task 2 schema
@@ -150,7 +150,7 @@ get_conn() → @contextmanager yield 池连接, commit/rollback/close 语义保�
 
 - [ ] **Step 3: upload.py 直接 SQL 收敛**
 
-把 `streamlit_app/upload.py:97-100` 的 `get_conn()` 直连 SQL 改为调用 db.py 既有 API 或等价 psycopg 查询，消除第二处 DB 访问点。
+把 `core/upload.py:97-100` 的 `get_conn()` 直连 SQL 改为调用 db.py 既有 API 或等价 psycopg 查询，消除第二处 DB 访问点。
 
 - [ ] **Step 4: 冒烟验证** —— 手动连 PG 调用 `ensure_schema()` + `upsert_entry()` + `rebuild_index()`，确认 CRUD 正常
 

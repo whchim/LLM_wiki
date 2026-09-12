@@ -135,9 +135,13 @@ def test_search_degrades_to_grep_without_key(client, headers, seeded, monkeypatc
     assert body["channels"] == {"grep": body["matches"], "vector": 0}
 
 
-def test_search_requires_auth_and_limits_query(client):
+def test_search_requires_auth_and_limits_query(client, headers):
+    """未认证一律 401（依赖先于参数校验执行，故超长 query 在匿名下也是 401）；
+    长度上限对已认证请求生效。"""
     assert client.get("/search", params={"query": "叫应"}).status_code == 401
-    assert client.get("/search", params={"query": "x" * 301}).status_code == 422
+    assert client.get("/search", params={"query": "x" * 301}).status_code == 401
+    assert client.get("/search", params={"query": "x" * 301}, headers=headers).status_code == 422
+    assert client.get("/search", params={"query": "x" * 300}, headers=headers).status_code == 200
 
 
 def test_grep_excludes_non_active_documents(client, headers, tmp_path, monkeypatch):

@@ -12,8 +12,10 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 # PostgreSQL 连接（替代 Demo 的 DB_PATH）
+# host 默认 127.0.0.1 而非 localhost：Windows 上 localhost 先解析 IPv6，而 Docker 只发布
+# IPv4，每次连接多等 2-5 秒（实测 5202ms vs 49ms）。容器内由 compose 显式传 DB_HOST=db。
 DB_CONFIG = {
-    "host": os.environ.get("DB_HOST", "localhost"),
+    "host": os.environ.get("DB_HOST", "127.0.0.1"),
     "port": os.environ.get("DB_PORT", "5432"),
     "dbname": os.environ.get("DB_NAME", "llmwiki"),
     "user": os.environ.get("DB_USER", "llmwiki"),

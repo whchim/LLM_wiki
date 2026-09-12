@@ -20,7 +20,7 @@
   },
   "components": [
     { "id": "user", "type": "external", "label": "用户", "sublabel": "浏览器", "row": 1, "col": 0 },
-    { "id": "streamlit", "type": "frontend", "label": "Streamlit", "sublabel": "管理台 :8501", "row": 1, "col": 1, "sources": [{ "path": "streamlit_app/app.py", "line": 1 }] },
+    { "id": "streamlit", "type": "frontend", "label": "Streamlit", "sublabel": "管理台 :8501", "row": 1, "col": 1, "sources": [{ "path": "core/app.py", "line": 1 }] },
     { "id": "api", "type": "backend", "label": "FastAPI", "sublabel": "REST :8000 · JWT · 审计", "row": 1, "col": 2, "sources": [{ "path": "api/main.py", "line": 1 }] },
     { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": "16 + pgvector :5432", "row": 1, "col": 3, "sources": [{ "path": "schema.sql", "line": 1 }] },
     { "id": "vault", "type": "database", "label": "vault/", "sublabel": "Markdown + YAML 权威源", "row": 3, "col": 1 },

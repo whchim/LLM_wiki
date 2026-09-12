@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parents[1] / "streamlit_app"))
+sys.path.insert(0, str(Path(__file__).parents[1] / "core"))
 
 from sales_clarification_runtime import ModelResponse, build_user_prompt, run_clarification_agent
 

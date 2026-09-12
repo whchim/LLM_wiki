@@ -13,9 +13,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# 共享模块路径：api/ 内 `import db/ops` 指向 streamlit_app/（容器已设 PYTHONPATH，本机兜底）
+# 共享模块路径：api/ 内 `import db/ops` 指向 core/（容器已设 PYTHONPATH，本机兜底）
 _API_ROOT = Path(__file__).resolve().parent.parent
-_SHLIB = _API_ROOT / "streamlit_app"
+_SHLIB = _API_ROOT / "core"
 if str(_SHLIB) not in sys.path:
     sys.path.insert(0, str(_SHLIB))
 

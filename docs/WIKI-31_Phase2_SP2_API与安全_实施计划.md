@@ -4,7 +4,7 @@
 
 **Goal:** 以 FastAPI 建立「真正后端」：REST API 化上传/审核/搜索/管理端点 + JWT 认证（admin/user/reviewer 角色）+ 审计日志（audit_logs），并让 Streamlit 管理台接入登录、消费 API。Claude Code 仍是唯一 LLM 引擎（API 不调用 LLM，编译触发仍写触发文件）。
 
-**Architecture:** 新增 `api/` FastAPI 应用（uvicorn，独立容器），复用 `streamlit_app/db.py` + `ops.py`（共享模块，不重构）；PyJWT HS256 + pwdlib[argon2]；审计为业务函数显式调用（非 ASGI 中间件）；users 表追加进 schema.sql；docker-compose 新增 `api` 服务并挂载同一 `./vault` 卷；Streamlit 经 `api_client.py` 消费 API。
+**Architecture:** 新增 `api/` FastAPI 应用（uvicorn，独立容器），复用 `core/db.py` + `ops.py`（共享模块，不重构）；PyJWT HS256 + pwdlib[argon2]；审计为业务函数显式调用（非 ASGI 中间件）；users 表追加进 schema.sql；docker-compose 新增 `api` 服务并挂载同一 `./vault` 卷；Streamlit 经 `api_client.py` 消费 API。
 
 **Tech Stack:** FastAPI、uvicorn、PyJWT、pwdlib[argon2]、Python 3.11+、psycopg3（复用）、Streamlit、pytest + TestClient、Docker Compose。
 
@@ -28,7 +28,7 @@
 **Files:**
 - Modify: `requirements.txt`（+fastapi +uvicorn +PyJWT +pwdlib[argon2]）
 - Modify: `schema.sql`（追加 users 表 DDL，幂等）
-- Modify: `streamlit_app/db.py`（ensure_schema 增加建 users 表 + 初始管理员注入：users 空则按 ADMIN_INIT_USER/PASS 创建，argon2 哈希）
+- Modify: `core/db.py`（ensure_schema 增加建 users 表 + 初始管理员注入：users 空则按 ADMIN_INIT_USER/PASS 创建，argon2 哈希）
 - Modify: `.env.example`（+JWT_SECRET +ADMIN_INIT_USER +ADMIN_INIT_PASS）
 
 **Interfaces:**
@@ -91,7 +91,7 @@
 - Create: `api/routers/admin_router.py`（POST /admin/rebuild-index）
 
 **Interfaces:**
-- 全部复用 `streamlit_app/db.py` + `ops.py` 现有函数；写操作端点内调用 `audit_log`
+- 全部复用 `core/db.py` + `ops.py` 现有函数；写操作端点内调用 `audit_log`
 - 上传：`ops._process_upload` 的等价实现（FastAPI 多文件 → RAW + 任务 + 触发文件）
 - 审核 approve：`ops.approve_entry(review_id, old_path, new_path)`；reject：`ops.reject_entry`；resubmit：`ops.resubmit` + `ops.write_trigger`
 - 搜索：请求参数 query → grep 语义（复用 app.py 逻辑）+ `db.insert_search_log`
@@ -109,10 +109,10 @@
 ### Task 5: Streamlit 接入（登录 + api_client + 页面改造）
 
 **Files:**
-- Create: `streamlit_app/api_client.py`
-- Create: `streamlit_app/login.py`
-- Modify: `streamlit_app/app.py`（登录态守卫 + 侧边栏用户/角色/退出）
-- Modify: `streamlit_app/upload.py`、`streamlit_app/review.py`、`streamlit_app/growth.py`（直连 db/ops → api_client）
+- Create: `core/api_client.py`
+- Create: `core/login.py`
+- Modify: `core/app.py`（登录态守卫 + 侧边栏用户/角色/退出）
+- Modify: `core/upload.py`、`core/review.py`、`core/growth.py`（直连 db/ops → api_client）
 
 **Interfaces:**
 - `ApiClient.login(username, password) -> dict`（静态）

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core"))
 
 import db  # conftest 已重载并重置测试库 schema
 from ops import write_trigger, validate_upload, approve_entry, reject_entry, resubmit, sha256_file

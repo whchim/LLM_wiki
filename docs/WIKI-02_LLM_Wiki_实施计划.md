@@ -243,7 +243,7 @@ cd "d:\桌面\LLM_wiki" && git add schema.sql init.sh tests/test_schema.py && gi
 ### Task 3: db.py 基础函数（连接 + 条目缓存：upsert/update_status/move_entry）
 
 **Files:**
-- Create: `streamlit_app/db.py`（本任务实现其中 4 个函数）
+- Create: `core/db.py`（本任务实现其中 4 个函数）
 - Test: `tests/test_db_basic.py`
 
 **Interfaces:**
@@ -257,7 +257,7 @@ import sys, os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core\))
 os.environ.setdefault("DB_PATH", str(ROOT / "vault" / "meta.db"))
 os.environ.setdefault("KB_ROOT", str(ROOT / "vault"))
 
@@ -374,7 +374,7 @@ Expected: 3 passed。
 - [ ] **Step 5: 提交**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && git add streamlit_app/db.py tests/test_db_basic.py && git commit -m "feat: db.py 基础数据访问（条目缓存 upsert/status/move）"
+cd "d:\桌面\LLM_wiki" && git add core/db.py tests/test_db_basic.py && git commit -m "feat: db.py 基础数据访问（条目缓存 upsert/status/move）"
 ```
 
 ---
@@ -382,7 +382,7 @@ cd "d:\桌面\LLM_wiki" && git add streamlit_app/db.py tests/test_db_basic.py &&
 ### Task 4: db.py 编译任务与审核函数
 
 **Files:**
-- Modify: `streamlit_app/db.py`（追加 7 个函数）
+- Modify: `core/db.py`（追加 7 个函数）
 - Test: `tests/test_db_review.py`
 
 **Interfaces:**
@@ -398,7 +398,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core\))
 
 import sqlite3
 from db import (get_conn, insert_compile_task, update_compile_task,
@@ -533,7 +533,7 @@ Expected: 3 passed。
 - [ ] **Step 5: 提交**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && git add streamlit_app/db.py tests/test_db_review.py && git commit -m "feat: db.py 编译任务与审核函数"
+cd "d:\桌面\LLM_wiki" && git add core/db.py tests/test_db_review.py && git commit -m "feat: db.py 编译任务与审核函数"
 ```
 
 ---
@@ -541,8 +541,8 @@ cd "d:\桌面\LLM_wiki" && git add streamlit_app/db.py tests/test_db_review.py &
 ### Task 5: db.py 搜索日志与重建索引 + ops.py 操作逻辑
 
 **Files:**
-- Modify: `streamlit_app/db.py`（追加 4 个函数）
-- Create: `streamlit_app/ops.py`（纯操作逻辑：触发文件写入、上传校验、通过/驳回动作——可单测，UI 只做展示）
+- Modify: `core/db.py`（追加 4 个函数）
+- Create: `core/ops.py`（纯操作逻辑：触发文件写入、上传校验、通过/驳回动作——可单测，UI 只做展示）
 - Test: `tests/test_db_growth.py`、`tests/test_ops.py`
 
 **Interfaces:**
@@ -563,7 +563,7 @@ import sys, os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core\))
 
 import sqlite3
 from db import insert_search_log, top_missed_queries, search_stats, get_conn
@@ -685,7 +685,7 @@ import sys, os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core\))
 
 import sqlite3
 from ops import write_trigger, validate_upload, approve_entry, reject_entry, resubmit, sha256_file
@@ -847,7 +847,7 @@ Expected: 3 passed。
 - [ ] **Step 9: 提交**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && git add streamlit_app/db.py streamlit_app/ops.py tests/test_db_growth.py tests/test_ops.py && git commit -m "feat: db.py 搜索/重建函数 + ops.py 操作逻辑"
+cd "d:\桌面\LLM_wiki" && git add core/db.py core/ops.py tests/test_db_growth.py tests/test_ops.py && git commit -m "feat: db.py 搜索/重建函数 + ops.py 操作逻辑"
 ```
 
 ---
@@ -855,8 +855,8 @@ cd "d:\桌面\LLM_wiki" && git add streamlit_app/db.py streamlit_app/ops.py test
 ### Task 6: Streamlit app.py 骨架（侧边栏 + 路由）
 
 **Files:**
-- Create: `streamlit_app/app.py`
-- Create: `streamlit_app/upload.py`、`streamlit_app/review.py`、`streamlit_app/growth.py`（本任务先建最小占位 render()，Task 7-9 填充）
+- Create: `core/app.py`
+- Create: `core/upload.py`、`core/review.py`、`core/growth.py`（本任务先建最小占位 render()，Task 7-9 填充）
 
 **Interfaces:**
 - Consumes: `ops.py`、`db.py`
@@ -918,7 +918,7 @@ else:
 - [ ] **Step 2: 创建三个页面的最小占位**
 
 ```python
-# streamlit_app/upload.py
+# core/upload.py
 import streamlit as st
 
 def render():
@@ -931,7 +931,7 @@ def render():
 - [ ] **Step 3: 手动验证**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && docker run --rm -p 8501:8501 -v "$PWD/vault:/app/vault" -e KB_ROOT=/app/vault -e DB_PATH=/app/vault/meta.db -v "$PWD/streamlit_app:/app/streamlit_app" -w /app python:3.11-slim sh -c "pip install -q streamlit pyyaml && streamlit run streamlit_app/app.py --server.port=8501 --server.address=0.0.0.0"
+cd "d:\桌面\LLM_wiki" && docker run --rm -p 8501:8501 -v "$PWD/vault:/app/vault" -e KB_ROOT=/app/vault -e DB_PATH=/app/vault/meta.db -v "$PWD/streamlit_app:/app/core\ -w /app python:3.11-slim sh -c "pip install -q streamlit pyyaml && streamlit run core/app.py --server.port=8501 --server.address=0.0.0.0"
 ```
 
 浏览器打开 http://localhost:8501，Expected：侧边栏可见（视角/搜索框/重建索引/导航），三个页面可切换。（本步是临时容器验证，Task 10 落正式 Dockerfile。）
@@ -939,7 +939,7 @@ cd "d:\桌面\LLM_wiki" && docker run --rm -p 8501:8501 -v "$PWD/vault:/app/vaul
 - [ ] **Step 4: 提交**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && git add streamlit_app/ && git commit -m "feat: Streamlit 入口与页面骨架"
+cd "d:\桌面\LLM_wiki" && git add core/ && git commit -m "feat: Streamlit 入口与页面骨架"
 ```
 
 ---
@@ -947,7 +947,7 @@ cd "d:\桌面\LLM_wiki" && git add streamlit_app/ && git commit -m "feat: Stream
 ### Task 7: upload.py 上传页（上传 + 触发 + 任务状态表）
 
 **Files:**
-- Modify: `streamlit_app/upload.py`
+- Modify: `core/upload.py`
 
 **Interfaces:**
 - Consumes: `ops.validate_upload`、`ops.sha256_file`、`ops.write_trigger`、`db.insert_compile_task`、`db.get_conn`
@@ -1029,7 +1029,7 @@ def render():
 - [ ] **Step 2: 手动验证**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && bash init.sh && docker run --rm -p 8501:8501 -v "$PWD/vault:/app/vault" -e KB_ROOT=/app/vault -e DB_PATH=/app/vault/meta.db -v "$PWD/streamlit_app:/app/streamlit_app" -w /app python:3.11-slim sh -c "pip install -q streamlit pyyaml && streamlit run streamlit_app/app.py --server.port=8501 --server.address=0.0.0.0"
+cd "d:\桌面\LLM_wiki" && bash init.sh && docker run --rm -p 8501:8501 -v "$PWD/vault:/app/vault" -e KB_ROOT=/app/vault -e DB_PATH=/app/vault/meta.db -v "$PWD/streamlit_app:/app/core\ -w /app python:3.11-slim sh -c "pip install -q streamlit pyyaml && streamlit run core/app.py --server.port=8501 --server.address=0.0.0.0"
 ```
 
 浏览器验证：
@@ -1040,7 +1040,7 @@ cd "d:\桌面\LLM_wiki" && bash init.sh && docker run --rm -p 8501:8501 -v "$PWD
 - [ ] **Step 3: 提交**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && git add streamlit_app/upload.py && git commit -m "feat: 上传页（上传校验+触发文件+任务状态表）"
+cd "d:\桌面\LLM_wiki" && git add core/upload.py && git commit -m "feat: 上传页（上传校验+触发文件+任务状态表）"
 ```
 
 ---
@@ -1048,7 +1048,7 @@ cd "d:\桌面\LLM_wiki" && git add streamlit_app/upload.py && git commit -m "fea
 ### Task 8: review.py 审核页（AI 判定展示 + 通过/驳回/重新提交）
 
 **Files:**
-- Modify: `streamlit_app/review.py`
+- Modify: `core/review.py`
 
 **Interfaces:**
 - Consumes: `db.list_pending_reviews`、`db.list_rejected_reviews`、`db.get_conn`、`ops.approve_entry`、`ops.reject_entry`、`ops.resubmit`、`ops.write_trigger`
@@ -1140,7 +1140,7 @@ Expected：审核页出现该条目，AI 评分面板 5 项齐全，[通过] 后
 - [ ] **Step 3: 提交**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && git add streamlit_app/review.py && git commit -m "feat: 审核页（AI 判定展示+通过/驳回/重试）"
+cd "d:\桌面\LLM_wiki" && git add core/review.py && git commit -m "feat: 审核页（AI 判定展示+通过/驳回/重试）"
 ```
 
 ---
@@ -1148,7 +1148,7 @@ cd "d:\桌面\LLM_wiki" && git add streamlit_app/review.py && git commit -m "fea
 ### Task 9: growth.py 自增长看板
 
 **Files:**
-- Modify: `streamlit_app/growth.py`
+- Modify: `core/growth.py`
 
 **Interfaces:**
 - Consumes: `db.top_missed_queries`、`db.search_stats`、`get_conn`
@@ -1206,7 +1206,7 @@ Expected：缺口列表首行"区块链 × 2"；统计卡片 总搜索 3、未�
 - [ ] **Step 3: 提交**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && git add streamlit_app/growth.py && git commit -m "feat: 自增长看板（缺口 Top 20+统计+周报）"
+cd "d:\桌面\LLM_wiki" && git add core/growth.py && git commit -m "feat: 自增长看板（缺口 Top 20+统计+周报）"
 ```
 
 ---
@@ -1237,9 +1237,9 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY streamlit_app/ ./streamlit_app/
+COPY core/ ./core/
 EXPOSE 8501
-CMD ["streamlit", "run", "streamlit_app/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "core/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
 ```
 
 `docker-compose.yml`：
@@ -1484,7 +1484,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "streamlit_app"))
+sys.path.insert(0, str(ROOT / "core\))
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch, tmp_path):
@@ -1496,9 +1496,9 @@ def _env(monkeypatch, tmp_path):
 
 - [ ] **Step 2: 创建 test_review_rules.py**
 
-> 审核确定性规则（完整性/去重指纹/敏感信息正则）是纯逻辑。设计文档 10.2 共 22 例。**实现位置**：完整性/敏感信息正则现放 `streamlit_app/rules.py`（供 review 页与 workflow 引用），本测试直接测该模块。
+> 审核确定性规则（完整性/去重指纹/敏感信息正则）是纯逻辑。设计文档 10.2 共 22 例。**实现位置**：完整性/敏感信息正则现放 `core/rules.py`（供 review 页与 workflow 引用），本测试直接测该模块。
 
-先创建 `streamlit_app/rules.py`（Step 3 实现），本步写测试：
+先创建 `core/rules.py`（Step 3 实现），本步写测试：
 
 ```python
 import re
@@ -1594,7 +1594,7 @@ Expected: 10 passed（test_review_rules 10 例；test_schema 2、test_db_basic 3
 - [ ] **Step 5: 提交**
 
 ```bash
-cd "d:\桌面\LLM_wiki" && git add tests/ streamlit_app/rules.py && git commit -m "test: 审核确定性规则测试集 + rules.py"
+cd "d:\桌面\LLM_wiki" && git add tests/ core/rules.py && git commit -m "test: 审核确定性规则测试集 + rules.py"
 ```
 
 ---
@@ -1756,7 +1756,7 @@ cd "d:\桌面\LLM_wiki" && git add -A && git commit -m "fix: 端到端验收修�
 
 **4. 已知偏差（实现级细化，非 spec 矛盾）**：
 - DDL 从 init.sh 内联提取为 `schema.sql`（可测性）
-- 新增 `streamlit_app/ops.py` 与 `streamlit_app/rules.py`（纯逻辑可单测，设计文档 9.2 未列，符合"UI 只做展示"原则）
+- 新增 `core/ops.py` 与 `core/rules.py`（纯逻辑可单测，设计文档 9.2 未列，符合"UI 只做展示"原则）
 - Task 13 将 22 例拆为 rules.py 10 例 + 前序任务 12 例，总数 22 不变
 - 测试依赖本机 Python 3.11 + pytest + sqlite3 CLI；本机无 Python 时 Task 2-5/13 延后至 Docker 环境执行
 
