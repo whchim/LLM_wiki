@@ -74,6 +74,20 @@ CREATE TABLE IF NOT EXISTS conflicts (
     created_at    TEXT
 );
 
+-- 应用层：客户别名表
+-- 用途：销售按内部习惯用中文简称（如「某某项目」）提交纪要，系统内部仍只存脱敏代号。
+-- 别名只在本系统内用于选择，不作为业务事实；customer_id 仍是状态机唯一键。
+-- 唯一键为 (alias, customer_id)：同一客户可有多个叫法；不同客户不得共用同一别名
+-- （插入时会因冲突被显式拒绝，避免把两个客户静默合并）。
+CREATE TABLE IF NOT EXISTS customer_aliases (
+    alias       TEXT NOT NULL,
+    customer_id TEXT NOT NULL,
+    created_by  TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (alias, customer_id)
+);
+CREATE INDEX IF NOT EXISTS idx_customer_aliases_customer ON customer_aliases(customer_id);
+
 -- Phase 2 SP2 新增：认证用户表
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

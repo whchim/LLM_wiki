@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Document, Refresh, Upload } from '@element-plus/icons-vue'
 import { api, ApiError, SESSION_STATUS_LABELS } from '../api'
 const loading = ref(false)
@@ -12,9 +12,81 @@ const importedFile = ref(null)
 const fileError = ref('')
 
 const form = ref({
-  customer_id: '', idempotency_key: '', occurred_at: nowLocal(),
+  customer_id: '', customer_alias: null, idempotency_key: '', occurred_at: nowLocal(),
   source_type: 'meeting_note', source_ref: null, content: '',
 })
+
+// ---- 客户简称（别名）绑定 ----
+const aliases = ref([])
+const addAliasDialog = ref(false)
+const aliasDraft = ref({ alias: '', customer_id: '' })
+
+/** 选了简称后锁定代号字段并回填解析结果，避免"选了简称还带旧代号"的混淆 */
+const customerIdLocked = computed(() => {
+  if (!form.value.customer_alias) return ''
+  const hit = aliases.value.find((a) => a.alias === form.value.customer_alias)
+  return hit ? `（由简称「${form.value.customer_alias}」决定：${hit.customer_id}）` : ''
+})
+
+async function loadAliases() {
+  try {
+    aliases.value = await api.aliases()
+  } catch (err) {
+    // 别名是可选便利功能，加载失败不阻断提交（仍可直接填代号）
+    aliases.value = []
+  }
+}
+
+function onAliasChange(value) {
+  const hit = aliases.value.find((a) => a.alias === value)
+  form.value.customer_id = hit ? hit.customer_id : ''
+}
+
+async function createAlias() {
+  const alias = aliasDraft.value.alias.trim()
+  const customerId = aliasDraft.value.customer_id.trim()
+  if (!alias) {
+    ElMessage.warning('请填写简称')
+    return
+  }
+  const existing = aliases.value.find((a) => a.alias === alias)
+  if (!customerId) {
+    ElMessage.warning('请填写该简称对应的脱敏代号（或用「生成代号」）')
+    return
+  }
+  try {
+    const created = await api.createAlias(alias, customerId)
+    await loadAliases()
+    form.value.customer_alias = created.alias
+    onAliasChange(created.alias)
+    addAliasDialog.value = false
+    aliasDraft.value = { alias: '', customer_id: '' }
+    ElMessage.success(`已登记简称「${created.alias}」`)
+  } catch (err) {
+    ElMessage.error(err instanceof ApiError ? err.message : '登记失败')
+  }
+}
+
+async function removeAlias(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除简称「${row.alias}」与代号 ${row.customer_id} 的绑定？删除后该简称不能再用于提交。`,
+      '删除别名绑定', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await api.deleteAlias(row.alias, row.customer_id)
+    if (form.value.customer_alias === row.alias) {
+      form.value.customer_alias = null
+      form.value.customer_id = ''
+    }
+    await loadAliases()
+    ElMessage.success('已删除绑定')
+  } catch (err) {
+    ElMessage.error(err instanceof ApiError ? err.message : '删除失败')
+  }
+}
 
 function nowLocal() {
   const d = new Date()
@@ -171,7 +243,7 @@ function turnNote(turn) {
 
 const openCount = computed(() => sessions.value.filter((s) => s.status === 'open').length)
 
-onMounted(load)
+onMounted(() => { load(); loadAliases() })
 </script>
 
 <template>
@@ -189,16 +261,41 @@ onMounted(load)
         <el-card shadow="never">
           <template #header><strong>提交洽谈纪要</strong></template>
           <el-form label-position="top">
+            <el-form-item>
+              <template #label>
+                <div class="label-row">
+                  <span>客户（可选内部简称）</span>
+                  <el-button size="small" text type="primary" @click="addAliasDialog = true">登记简称</el-button>
+                </div>
+              </template>
+              <el-select
+                v-model="form.customer_alias"
+                clearable filterable allow-create default-first-option
+                placeholder="选择已登记的简称；没有就留空，改用右侧代号"
+                @change="onAliasChange"
+              >
+                <el-option v-for="a in aliases" :key="a.alias + a.customer_id"
+                           :label="a.alias" :value="a.alias">
+                  <span>{{ a.alias }}</span>
+                  <span class="alias-cid">{{ a.customer_id }}</span>
+                </el-option>
+              </el-select>
+              <div class="field-hint">
+                简称只是选择入口，系统内部仍存脱敏代号；同一客户可登记多个叫法。
+              </div>
+            </el-form-item>
             <el-row :gutter="12">
               <el-col :span="12">
                 <el-form-item>
                   <template #label>
                     <div class="label-row">
-                      <span>客户脱敏标识</span>
-                      <el-button size="small" text type="primary" @click="generateCustomerId">生成代号</el-button>
+                      <span>客户脱敏标识{customerIdLocked}</span>
+                      <el-button size="small" text type="primary" :disabled="!!form.customer_alias"
+                                 @click="generateCustomerId">生成代号</el-button>
                     </div>
                   </template>
-                  <el-input v-model="form.customer_id" placeholder="cust-20260912-a3f7" />
+                  <el-input v-model="form.customer_id" :disabled="!!form.customer_alias"
+                            :placeholder="form.customer_alias ? '由所选简称决定' : 'cust-20260912-a3f7'" />
                   <div class="field-hint">
                     用代号，不要填客户真实名称：同一客户长期复用同一个代号（状态按它聚合），
                     只能用字母、数字和 <code>- _ . :</code>，首字符须为字母或数字。
@@ -257,6 +354,27 @@ onMounted(load)
                     title="提交前自动检查敏感信息、Prompt injection 与数字隔离；精确数值不会进入 Agent 上下文。" />
 
           <el-button type="primary" :loading="loading" class="full" @click="submit">提交并进入澄清</el-button>
+
+          <el-collapse class="alias-manage">
+            <el-collapse-item :title="`已登记的客户简称（${aliases.length}）`" name="alias">
+              <el-empty v-if="!aliases.length" description="还没有登记简称" :image-size="60">
+                <p class="muted">简称让销售不用记代号；系统内部仍只存代号。</p>
+              </el-empty>
+              <el-table v-else :data="aliases" size="small">
+                <el-table-column prop="alias" label="内部简称" min-width="100" />
+                <el-table-column prop="customer_id" label="脱敏代号" min-width="140" show-overflow-tooltip />
+                <el-table-column prop="created_by" label="登记人" width="90" />
+                <el-table-column label="操作" width="80">
+                  <template #default="{ row }">
+                    <el-button size="small" text type="danger" @click="removeAlias(row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <p class="muted alias-note">
+                同一简称只能绑定一个客户——绑到别的客户会被拒绝并提示冲突，避免把两个客户合并成一个。
+              </p>
+            </el-collapse-item>
+          </el-collapse>
         </el-card>
       </el-col>
 
@@ -325,6 +443,29 @@ onMounted(load)
         </el-card>
       </el-col>
     </el-row>
+
+    <el-dialog v-model="addAliasDialog" title="登记客户简称" width="460px">
+      <el-form label-position="top">
+        <el-form-item label="内部简称">
+          <el-input v-model="aliasDraft.alias" placeholder="例如：某某项目 / 某某科技"
+                    maxlength="40" show-word-limit />
+        </el-form-item>
+        <el-form-item label="对应脱敏代号">
+          <el-input v-model="aliasDraft.customer_id" placeholder="cust-20260912-a3f7" />
+          <div class="field-hint">
+            简称只是选择入口，系统内部仍存这个代号；不能填客户真实名称或手机号。
+            不确定就点「生成代号」。
+          </div>
+        </el-form-item>
+        <el-button size="small" text type="primary" @click="() => { if (!aliasDraft.customer_id) { generateCustomerId(); aliasDraft.customer_id = form.customer_id } }">
+          生成一个代号填入
+        </el-button>
+      </el-form>
+      <template #footer>
+        <el-button @click="addAliasDialog = false">取消</el-button>
+        <el-button type="primary" @click="createAlias">登记</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -334,6 +475,9 @@ onMounted(load)
 .label-row { display: flex; align-items: center; justify-content: space-between; width: 100%; }
 .field-hint { margin-top: 6px; color: var(--c-text-dim); font-size: 12px; line-height: 1.7; }
 .field-hint code { padding: 1px 4px; border-radius: 4px; background: var(--c-neutral-badge-bg); font-size: 11px; }
+.alias-manage { margin-top: 16px; }
+.alias-note { margin: 8px 0 0; line-height: 1.7; }
+.alias-cid { float: right; color: var(--c-text-faint); font-size: 11px; }
 .hidden-file { display: none; }
 .file-chip { display: inline-flex; align-items: center; gap: 6px; }
 .card-head { display: flex; align-items: center; gap: 10px; }

@@ -7,8 +7,7 @@ sys.path.insert(0, str(ROOT / "core"))
 
 import psycopg
 
-TEST_DB = dict(host="localhost", port=5432, dbname="llmwiki_test",
-               user="llmwiki", password="llmwiki")
+from conftest import TEST_DB  # 复用同一份连接参数，避免各文件硬编码漂移
 
 
 def _tables():
@@ -45,4 +44,4 @@ def test_ensure_schema_is_idempotent(tmp_path, monkeypatch):
                          "trace_events", "health_reports", "customers", "conversations",
                          "evidence", "state_proposals", "state_decisions", "state_events",
                          "current_states", "sensitive_numeric_values", "clarification_sessions",
-                         "clarification_turns", "clarification_answers"}
+                         "clarification_turns", "clarification_answers", "customer_aliases"}

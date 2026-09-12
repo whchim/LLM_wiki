@@ -13,9 +13,7 @@ import importlib
 import psycopg
 
 import db
-
-TEST_DB = dict(host="localhost", port=5432, dbname="llmwiki_test",
-               user="llmwiki", password="llmwiki")
+from conftest import TEST_DB  # 复用同一份连接参数（含 127.0.0.1 默认值，避免 IPv6 解析拖慢）
 
 
 def test_pgvector_extension_present():

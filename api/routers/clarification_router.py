@@ -20,9 +20,24 @@ def intake(body: SalesIntakeRequest, request: Request,
            user: auth.User = Depends(auth.get_current_user),
            _trace: auth.User = Depends(trace_mod.trace("sales_intake"))):
     """销售提交一次脱敏纪要；只创建证据和澄清会话，不调用模型或改状态。"""
+    # 别名解析先于门禁：别名只是"选择入口"，解析出的代号仍要过 customer_id 的格式与敏感检查
+    customer_id = body.customer_id.strip()
+    resolved_from_alias = None
+    if body.customer_alias and body.customer_alias.strip():
+        try:
+            resolved_from_alias = db.resolve_customer_alias(body.customer_alias)
+        except KeyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc).strip("'\"")) from exc
+        if resolved_from_alias is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"别名为「{body.customer_alias.strip()}」的客户尚未登记；"
+                       f"请先在「客户别名」中建立绑定，或直接填写 customer_id")
+        customer_id = resolved_from_alias
+
     prepared = sales_preprocess.preprocess_sales_input({
         "idempotency_key": body.idempotency_key,
-        "customer_id": body.customer_id,
+        "customer_id": customer_id,
         "content": body.content,
         "occurred_at": body.occurred_at,
         "submitted_by": user.username,
@@ -63,6 +78,8 @@ def intake(body: SalesIntakeRequest, request: Request,
                       "numeric_ref_count": len(prepared["numeric_refs"])})
     request.state.trace_detail = {"operation": "sales_intake", "session_id": session["session_id"]}
     return {"conversation": conversation, "evidence": evidence, "session": session,
+            "alias": body.customer_alias.strip() if body.customer_alias and body.customer_alias.strip() else None,
+            "resolved_customer_id": resolved_from_alias,
             "gate": {"risk_flags": prepared["risk_flags"], "numeric_ref_count": len(prepared["numeric_refs"])}}
 
 

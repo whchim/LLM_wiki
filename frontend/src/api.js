@@ -67,6 +67,13 @@ export const api = {
   rebuildIndex: () => request('/admin/rebuild-index', { method: 'POST' }),
   backfillEmbeddings: (batch = 10) => request(`/admin/backfill-embeddings${qs({ batch })}`, { method: 'POST' }),
 
+  // ---- 客户别名（中文简称 → 脱敏代号）----
+  aliases: () => request('/customers/aliases'),
+  createAlias: (alias, customerId) => request('/customers/aliases', {
+    method: 'POST', body: JSON.stringify({ alias, customer_id: customerId }),
+  }),
+  deleteAlias: (alias, customerId) => request(`/customers/aliases${qs({ alias, customer_id: customerId })}`, { method: 'DELETE' }),
+
   // ---- 销售域：事实澄清 ----
   intake: (body) => request('/clarifications/intake', { method: 'POST', body: JSON.stringify(body) }),
   mine: () => request('/clarifications/mine'),

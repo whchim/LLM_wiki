@@ -1,13 +1,13 @@
 import psycopg
 from pathlib import Path
 
+from conftest import TEST_DB  # 复用同一份连接参数（含 127.0.0.1 默认值，避免 IPv6 解析拖慢）
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def _conn():
-    return psycopg.connect(
-        host="localhost", port=5432, dbname="llmwiki_test",
-        user="llmwiki", password="llmwiki")
+    return psycopg.connect(**TEST_DB)
 
 
 def _tables(conn):
@@ -40,4 +40,4 @@ def test_schema_is_idempotent(tmp_path):
                       "health_reports", "customers", "conversations", "evidence",
                       "state_proposals", "state_decisions", "state_events", "current_states",
                       "sensitive_numeric_values", "clarification_sessions", "clarification_turns",
-                      "clarification_answers"}
+                      "clarification_answers", "customer_aliases"}

@@ -93,16 +93,27 @@ class ClarificationSessionRequest(BaseModel):
 
 
 class SalesIntakeRequest(BaseModel):
-    """销售工作台提交的脱敏中文纪要；submitted_by 由 JWT 注入。"""
+    """销售工作台提交的脱敏中文纪要；submitted_by 由 JWT 注入。
+
+    customer_alias：可选，内部中文简称。给了它就以别名绑定的 customer_id 为准，
+    前端因此不必自己知道代号；别名未登记/对应多个客户时明确报错，不做猜测。
+    """
     idempotency_key: str
-    customer_id: str
+    customer_id: str = ""
     content: str
     occurred_at: str
     source_type: str = "meeting_note"
     source_ref: str | None = None
+    customer_alias: str | None = None
 
 
 class ClarificationAnswerRequest(BaseModel):
     turn_id: str
     question_id: str
     answer_text_redacted: str
+
+
+class CustomerAliasRequest(BaseModel):
+    """建立"内部中文简称 → 脱敏代号"的绑定；别名由服务端做敏感信息检查。"""
+    alias: str
+    customer_id: str

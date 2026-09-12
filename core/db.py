@@ -3,6 +3,7 @@
 对外接口签名与 Phase 1 SQLite 版保持一致（36 个函数/工具被 app/ops/review/growth/upload 依赖），
 仅内部实现切换为 PostgreSQL 16 + pgvector + psycopg_pool 连接池。"""
 import os
+import re
 import uuid
 from contextlib import contextmanager
 from typing import Iterator
@@ -541,3 +542,88 @@ def rebuild_index() -> int:
                          meta.get("description")))
                     count += 1
     return count
+
+
+# ---- 客户别名（应用层：让销售用中文简称选客户，系统内部仍只存脱敏代号） ----
+MAX_ALIAS_CHARS = 40
+
+
+def _normalize_alias(alias: str) -> str:
+    return " ".join(str(alias or "").split())
+
+
+def create_customer_alias(alias: str, customer_id: str, created_by: str) -> dict:
+    """建立"中文别名 → 稳脱敏代号"映射。
+
+    校验在服务端：别名不得为空/过长/含控制字符，且必须通过敏感信息检查
+    （别名是用户自填的自由文本，这条闸不能省）；customer_id 必须是合规代号。
+    重名冲突显式报错（ValueError），绝不静默合并到别的客户。
+    """
+    import rules  # 局部导入：避免数据层顶层依赖业务规则
+    from sales_preprocess import CUSTOMER_ID_RE  # 复用同一份代号正则，避免两处定义漂移
+
+    alias = _normalize_alias(alias)
+    customer_id = str(customer_id or "").strip()
+    if not alias:
+        raise ValueError("别名不能为空")
+    if len(alias) > MAX_ALIAS_CHARS:
+        raise ValueError(f"别名过长（{len(alias)} 字符，上限 {MAX_ALIAS_CHARS}）")
+    if any(ord(ch) < 32 for ch in alias):
+        raise ValueError("别名不能包含控制字符")
+    if rules.check_sensitive(alias) != "pass":
+        raise ValueError("别名疑似包含未脱敏敏感信息（如手机号、身份证号），请改用不含敏感信息的简称")
+    if not customer_id or len(customer_id) > 128 or not CUSTOMER_ID_RE.fullmatch(customer_id):
+        raise ValueError("customer_id 必须是合规的脱敏代号")
+    with get_conn() as conn:
+        # 同一别名若已绑定到别的客户，明确拒绝并指出冲突对象
+        existing = conn.execute(
+            "SELECT customer_id FROM customer_aliases WHERE alias=%s", (alias,)).fetchall()
+        others = [r[0] for r in existing if r[0] != customer_id]
+        if others:
+            raise KeyError(f"别名「{alias}」已绑定到其他客户：{', '.join(others)}；请换一个别名或先删除旧绑定")
+        row = conn.execute(
+            "INSERT INTO customer_aliases (alias, customer_id, created_by) VALUES (%s,%s,%s) "
+            "ON CONFLICT (alias, customer_id) DO UPDATE SET created_by=EXCLUDED.created_by "
+            "RETURNING alias, customer_id, created_by, created_at",
+            (alias, customer_id, created_by)).fetchone()
+    keys = ("alias", "customer_id", "created_by", "created_at")
+    return dict(zip(keys, row))
+
+
+def list_customer_aliases() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT alias, customer_id, created_by, created_at FROM customer_aliases "
+            "ORDER BY created_at DESC, alias").fetchall()
+    keys = ("alias", "customer_id", "created_by", "created_at")
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def resolve_customer_alias(alias: str) -> str | None:
+    """别名 → customer_id；未登记返回 None；同别名对应多个客户时视为冲突（KeyError）。"""
+    alias = _normalize_alias(alias)
+    if not alias:
+        return None
+    with get_conn() as conn:
+        rows = [r[0] for r in conn.execute(
+            "SELECT customer_id FROM customer_aliases WHERE alias=%s", (alias,)).fetchall()]
+    if not rows:
+        return None
+    if len(rows) > 1:
+        raise KeyError(f"别名「{alias}」对应多个客户（{', '.join(sorted(rows))}），请改用 customer_id 提交")
+    return rows[0]
+
+
+def delete_customer_alias(alias: str, customer_id: str, *, requester: str, is_admin: bool) -> bool:
+    """删除别名绑定；仅创建者或管理员可删。返回是否删除了记录。"""
+    alias = _normalize_alias(alias)
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT created_by FROM customer_aliases WHERE alias=%s AND customer_id=%s",
+            (alias, customer_id)).fetchone()
+        if row is None:
+            return False
+        if not is_admin and row[0] != requester:
+            raise PermissionError("仅别名的创建者或管理员可以删除该绑定")
+        conn.execute("DELETE FROM customer_aliases WHERE alias=%s AND customer_id=%s", (alias, customer_id))
+    return True

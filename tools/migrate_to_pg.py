@@ -25,8 +25,10 @@ import db
 
 
 def _pg_conninfo() -> str:
+    # host 默认 127.0.0.1：Windows 上 localhost 先解析 IPv6，而 Docker 只发布 IPv4，
+    # 每次连接会多等数秒（实测 5202ms vs 49ms）
     cfg = {
-        "host": os.environ.get("DB_HOST", "localhost"),
+        "host": os.environ.get("DB_HOST", "127.0.0.1"),
         "port": os.environ.get("DB_PORT", "5432"),
         "dbname": os.environ.get("DB_NAME", "llmwiki"),
         "user": os.environ.get("DB_USER", "llmwiki"),
