@@ -282,11 +282,11 @@ onMounted(load)
 .card-head .muted { margin-left: auto; }
 .session-card { margin-bottom: 18px; }
 .turn { margin-bottom: 18px; }
-.turn-head { font-size: 12px; color: #7890ae; margin-bottom: 8px; }
+.turn-head { font-size: 12px; color: var(--c-text-dim); margin-bottom: 8px; }
 .question { padding: 10px 12px; border: 1px solid var(--el-border-color); border-radius: 8px; margin-bottom: 8px; }
-.q-text { margin: 0 0 8px; font-size: 13px; color: #d7e1ee; }
+.q-text { margin: 0 0 8px; font-size: 13px; color: var(--c-text); }
 .answered { font-size: 12px; color: var(--el-color-success); }
 .answer-row { display: flex; gap: 8px; }
-.muted { color: #91a5c0; font-size: 12px; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
 :deep(.el-table__row) { cursor: pointer; }
 </style>

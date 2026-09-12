@@ -93,11 +93,11 @@ onMounted(load)
 
 <style scoped>
 .stat-row { margin-bottom: 20px; }
-.stat-label { font-size: 12px; color: #91a5c0; }
-.stat-value { margin-top: 6px; font-size: 28px; font-weight: 700; color: #eaf4ff; }
-.stat-value small { font-size: 13px; font-weight: 500; color: #91a5c0; }
-.stat-sub { margin-top: 6px; font-size: 11px; color: #7890ae; }
-.section { margin: 22px 0 12px; font-size: 15px; color: #cddcef; }
+.stat-label { font-size: 12px; color: var(--c-text-muted); }
+.stat-value { margin-top: 6px; font-size: 28px; font-weight: 700; color: var(--c-text-strong); }
+.stat-value small { font-size: 13px; font-weight: 500; color: var(--c-text-muted); }
+.stat-sub { margin-top: 6px; font-size: 11px; color: var(--c-text-dim); }
+.section { margin: 22px 0 12px; font-size: 15px; color: var(--c-text); }
 .note { margin-top: 20px; }
-.muted { color: #91a5c0; font-size: 12px; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
 </style>

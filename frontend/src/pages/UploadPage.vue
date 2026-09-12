@@ -158,12 +158,12 @@ onMounted(loadTasks)
 <style scoped>
 .upload-card { margin-bottom: 20px; }
 .upload-icon { font-size: 46px; color: var(--el-color-primary); }
-.upload-text { margin-top: 8px; color: #b7c5d9; font-size: 14px; }
+.upload-text { margin-top: 8px; color: var(--c-text-regular); font-size: 14px; }
 .upload-text em { color: var(--el-color-primary); font-style: normal; }
-.upload-tip { margin-top: 8px; color: #7890ae; font-size: 12px; line-height: 1.7; }
+.upload-tip { margin-top: 8px; color: var(--c-text-dim); font-size: 12px; line-height: 1.7; }
 .submit-bar { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .err-item { margin-top: 10px; }
 .card-head { display: flex; align-items: center; gap: 10px; }
-.muted { color: #91a5c0; font-size: 12px; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
 .danger { color: var(--el-color-danger); }
 </style>

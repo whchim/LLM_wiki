@@ -147,9 +147,9 @@ onMounted(load)
 .stage-card { cursor: pointer; text-align: center; transition: opacity .15s; }
 .stage-card.dim { opacity: .45; }
 .stage-card.picked { border-color: var(--el-color-primary); }
-.stage-name { font-size: 12px; color: #91a5c0; }
-.stage-count { margin-top: 6px; font-size: 26px; font-weight: 700; color: #eaf4ff; }
-.hint { margin: 6px 0 0; font-size: 12px; color: #7890ae; }
+.stage-name { font-size: 12px; color: var(--c-text-muted); }
+.stage-count { margin-top: 6px; font-size: 26px; font-weight: 700; color: var(--c-text-strong); }
+.hint { margin: 6px 0 0; font-size: 12px; color: var(--c-text-dim); }
 .filter-bar { display: flex; align-items: center; gap: 12px; margin: 18px 0 10px; }
 .need-action { margin-top: 18px; }
 .action-item { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13px; }
@@ -157,5 +157,5 @@ onMounted(load)
 .danger { color: var(--el-color-danger); }
 .boundary { margin-top: 24px; }
 .boundary ul { margin: 0; padding-left: 20px; line-height: 1.9; font-size: 12px; }
-.muted { color: #91a5c0; font-size: 12px; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
 </style>

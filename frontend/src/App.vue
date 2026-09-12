@@ -2,10 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  DataAnalysis, DataBoard, Document, FolderOpened, Refresh, Search,
-  Setting, UploadFilled, UserFilled, ChatDotRound, Checked, SwitchButton,
+  DataAnalysis, DataBoard, Document, FolderOpened, Moon, Refresh, Search,
+  Setting, Sunny, UploadFilled, UserFilled, ChatDotRound, Checked, SwitchButton,
 } from '@element-plus/icons-vue'
 import { api, ApiError, ROLE_LABELS } from './api'
+import { useTheme } from './core/theme'
 
 import LoginPage from './pages/LoginPage.vue'
 import OverviewPage from './pages/OverviewPage.vue'
@@ -21,6 +22,7 @@ import CustomerStatePage from './pages/CustomerStatePage.vue'
 const auth = ref(JSON.parse(localStorage.getItem('llmwiki_auth') || 'null'))
 const view = ref('overview')
 const loading = ref(false)
+const { isDark, toggle: toggleTheme } = useTheme()
 
 const isReviewer = computed(() => ['admin', 'reviewer'].includes(auth.value?.role))
 const isAdmin = computed(() => auth.value?.role === 'admin')
@@ -153,6 +155,11 @@ defineExpose({ notifyError })
           <span class="slash">/</span>
           <span>{{ visibleNav.find((n) => n.key === view)?.label }}</span>
         </div>
+        <el-tooltip :content="isDark ? '切换到浅色' : '切换到深色'" placement="bottom">
+          <el-button class="theme-toggle" text :icon="isDark ? Sunny : Moon" @click="toggleTheme">
+            {{ isDark ? '浅色主题' : '深色主题' }}
+          </el-button>
+        </el-tooltip>
       </el-header>
 
       <el-main class="main">
@@ -178,36 +185,36 @@ defineExpose({ notifyError })
   flex-direction: column;
   padding: 20px 14px 14px;
   border-right: 1px solid var(--el-border-color);
-  background: #0d1726;
+  background: var(--c-sidebar);
 }
 
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 20px; }
 .brand-icon {
   display: grid; place-items: center;
   width: 32px; height: 32px; border-radius: 9px;
-  background: var(--el-color-primary); color: #062225;
+  background: var(--el-color-primary); color: var(--c-brand-icon-fg);
   font-size: 18px;
 }
-.brand strong { display: block; font-size: 15px; color: #e7f5f4; }
-.brand span { display: block; margin-top: 2px; font-size: 10px; letter-spacing: .08em; color: #7187a6; text-transform: uppercase; }
+.brand strong { display: block; font-size: 15px; color: var(--c-brand-text); }
+.brand span { display: block; margin-top: 2px; font-size: 10px; letter-spacing: .08em; color: var(--c-text-faint); text-transform: uppercase; }
 
 .sidebar-search { margin-bottom: 14px; }
-:deep(.sidebar-search .el-input__wrapper) { background: rgba(7, 16, 29, .72); }
+:deep(.sidebar-search .el-input__wrapper) { background: var(--c-input-bg); }
 
 .nav-scroll { flex: 1; min-height: 0; }
 .nav-group {
   padding: 14px 10px 6px;
-  font-size: 10px; letter-spacing: .15em; text-transform: uppercase; color: #657b99;
+  font-size: 10px; letter-spacing: .15em; text-transform: uppercase; color: var(--c-text-faint);
 }
 .nav-item {
   display: flex; align-items: center; gap: 10px;
   margin: 2px 0; padding: 9px 11px;
   border-radius: 8px; cursor: pointer;
-  color: #91a5c0; font-size: 13px;
+  color: var(--c-text-muted); font-size: 13px;
   transition: background .15s, color .15s;
 }
-.nav-item:hover { color: #e7f5f4; background: rgba(64, 158, 255, .1); }
-.nav-item.active { color: #e7f5f4; background: rgba(64, 158, 255, .16); box-shadow: inset 2px 0 0 var(--el-color-primary); }
+.nav-item:hover { color: var(--c-text-strong); background: var(--c-hover-bg); }
+.nav-item.active { color: var(--c-text-strong); background: var(--c-hover-bg); box-shadow: inset 2px 0 0 var(--el-color-primary); }
 
 .sidebar-foot { padding-top: 12px; border-top: 1px solid var(--el-border-color); }
 .foot-btn { width: 100%; margin-bottom: 10px; }
@@ -215,21 +222,24 @@ defineExpose({ notifyError })
 .avatar {
   display: grid; place-items: center;
   width: 30px; height: 30px; border-radius: 50%;
-  background: var(--el-color-warning); color: #08212a;
+  background: var(--c-avatar-bg); color: var(--c-avatar-fg);
   font-size: 12px; font-weight: 800;
 }
 .user-meta { flex: 1; min-width: 0; }
-.user-meta strong { display: block; font-size: 12px; color: #d7e1ee; }
-.user-meta span { display: block; margin-top: 2px; font-size: 11px; color: #7890ae; }
+.user-meta strong { display: block; font-size: 12px; color: var(--c-text); }
+.user-meta span { display: block; margin-top: 2px; font-size: 11px; color: var(--c-text-dim); }
 
 .topbar {
-  display: flex; align-items: center;
+  display: flex; align-items: center; justify-content: space-between;
   height: 62px;
   border-bottom: 1px solid var(--el-border-color);
 }
-.crumbs { font-size: 13px; color: #a7b8cd; }
-.crumb-brand { color: var(--el-color-primary); font-size: 11px; font-weight: 700; letter-spacing: .15em; }
-.slash { margin: 0 10px; color: #526984; }
+.crumbs { font-size: 13px; color: var(--c-text-regular); }
+.crumb-brand { color: var(--c-brand-ink); font-size: 11px; font-weight: 700; letter-spacing: .15em; }
+.slash { margin: 0 10px; color: var(--c-text-faint); }
+.theme-toggle { color: var(--c-text-muted); }
+.theme-toggle:hover { color: var(--c-brand-ink); }
 
 .main { padding: 26px 30px 60px; }
+
 </style>

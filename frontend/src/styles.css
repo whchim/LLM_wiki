@@ -1,10 +1,73 @@
-/* 全局样式：只放重置与跨页共用类；页面级样式一律写在各自 .vue 的 scoped 里。
-   Element Plus 深色变量由 theme-chalk/dark/css-vars.css 提供，此处只做少量覆写。 */
+/* 主题令牌：深色为默认（--el-* 由 Element Plus dark css-vars 提供，此处补齐自有令牌）。
+   浅色在 :root:not(.dark) 下覆盖。切换只需切换 <html> 的 dark 类，无需重新渲染组件。 */
 
 :root {
   font-family: Inter, "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+/* ---- 深色（默认） ---- */
+:root {
+  --c-bg: #0b1421;
+  --c-glow: #17304f;
+  --c-sidebar: #0d1726;
+  --c-input-bg: rgba(7, 16, 29, .72);
+
+  --c-text-strong: #eaf4ff;
+  --c-text: #e8eef7;
+  --c-text-regular: #b7c5d9;
+  --c-text-muted: #91a5c0;
+  --c-text-dim: #7890ae;
+  --c-text-faint: #6e86a6;   /* 对比度：on #0d1726 = 4.6:1（原 #647b99 仅 4.14） */
+
+  --c-stat-value: #eaf4ff;
+  --c-neutral-badge-bg: rgba(255, 255, 255, .08);
+  --c-neutral-badge-text: #cddcef;
+  --c-hover-bg: rgba(64, 158, 255, .1);
+  --c-panel-bg: #0d1726;
+  --c-hint-bg: rgba(86, 214, 208, .07);
+
+  --c-brand-text: #e7f5f4;
+  --c-brand-icon-fg: #062225;
+  --c-brand-ink: var(--el-color-primary);   /* 深色下主色在深底上对比足够 */
+  --c-avatar-bg: var(--el-color-warning);
+  --c-avatar-fg: #08212a;
+
+  color-scheme: dark;
+}
+
+/* ---- 浅色 ---- */
+:root:not(.dark) {
+  --c-bg: #f4f7fb;
+  --c-glow: #dce9ff;
+  --c-sidebar: #ffffff;
+  --c-input-bg: #ffffff;
+
+  --c-text-strong: #16233a;
+  --c-text: #1f2d45;
+  --c-text-regular: #3d4f6b;
+  --c-text-muted: #5b6f8d;
+  --c-text-dim: #5e7191;     /* on #fff ≈ 4.6:1（原 #6b7f9c 仅 4.35） */
+  --c-text-faint: #5f728d;   /* on #fff ≈ 4.9:1（原 #7d90ac 仅 3.3） */
+  --c-text-placeholder: #5f728d;  /* 覆盖 Element 默认 #909399（仅 3.0:1） */
+
+  --c-stat-value: #16233a;
+  --c-neutral-badge-bg: #eef2f8;
+  --c-neutral-badge-text: #3d4f6b;
+  --c-hover-bg: rgba(64, 158, 255, .08);
+  --c-panel-bg: #ffffff;
+  --c-hint-bg: rgba(64, 158, 255, .06);
+
+  --c-brand-text: #16233a;
+  --c-brand-icon-fg: #ffffff;
+  /* 品牌色作小号文字时的替代色：#409eff on 页面底仅 2.59:1 */
+  --c-brand-ink: #1f6fc4;
+  /* 浅色下用深琥珀：白字 on #e6a23c 仅 2.19:1、on #b88230 3.35:1，均不可读 */
+  --c-avatar-bg: #8a5f1c;
+  --c-avatar-fg: #ffffff;
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -13,12 +76,14 @@ body {
   margin: 0;
   min-width: 320px;
   color: var(--el-text-color-primary);
-  background: radial-gradient(circle at 72% -12%, #17304f 0, transparent 44%), #0b1421;
+  /* 深浅两套渐变同形，只换色，避免切换时布局跳动 */
+  background: radial-gradient(circle at 72% -12%, var(--c-glow) 0, transparent 44%), var(--c-bg);
+  transition: background-color .2s ease;
 }
 
 button, input, textarea, select { font: inherit; }
 
-/* 深色下的卡片与表面对齐页面底色（Element 默认偏灰） */
+/* Element Plus 深色下的表面色与页面底色对齐（浅色用其默认即可） */
 .dark {
   --el-bg-color: #101b2d;
   --el-bg-color-overlay: #13223a;
@@ -34,7 +99,55 @@ button, input, textarea, select { font: inherit; }
   --el-color-primary: #409eff;
 }
 
-/* 跨页共用：页面骨架与标题 */
+/* 浅色下补 Element 默认值的可读性（深色不受影响）。
+   根因：#409eff 作正文级文本（蓝底白字按钮 / 蓝字链接 / el-tag）仅 2.78:1。
+   处理：浅色主色改用 #1f6fc4 —— 白字 5.09:1、页面底 4.73:1，派生的
+   light-3/-5/-7/-9 同步换成本色系的更清晰取值。 */
+:root:not(.dark) {
+  --el-color-primary: #1f6fc4;
+  --el-color-primary-light-3: #4d8ed3;
+  --el-color-primary-light-5: #8db8e4;
+  --el-color-primary-light-7: #bcd3ef;
+  --el-color-primary-light-8: #d2e1f4;
+  --el-color-primary-light-9: #e9f0fa;
+  --el-color-primary-dark-2: #19599d;
+  --el-color-primary-dark-3: #14487d;
+  --el-text-color-placeholder: var(--c-text-placeholder);
+  --el-text-color-secondary: #5f728d;   /* 空状态/说明文案：默认 #909399 仅 3.08:1 */
+  --el-text-color-disabled: #8a99ad;
+}
+/* 浅色下主色更深，实心按钮保持白字（对比 5.09:1） */
+:root:not(.dark) .el-button--primary:not(.is-plain):not(.is-text):not(.is-link) {
+  --el-button-text-color: #ffffff;
+}
+:root:not(.dark) .el-radio-button.is-active .el-radio-button__inner { color: #ffffff; }
+/* 禁用态：Element 用 light-5 底 + 50% 白字，几乎不可读——补对比 */
+.el-button--primary.is-disabled,
+.el-button--primary.is-disabled:hover,
+.el-button--primary.is-disabled:focus {
+  color: var(--el-color-white);
+  background-color: var(--el-color-primary-dark-2);
+  border-color: var(--el-color-primary-dark-2);
+  opacity: .75;
+}
+
+/* 深色：主色 #409eff 上放白字只有 2.78:1。只加深"实心主色按钮"底色，
+   不动 --el-color-primary 本身——否则侧边栏高亮、链接、图标会一起变暗。 */
+:root.dark .el-button--primary:not(.is-plain):not(.is-text):not(.is-link) {
+  background-color: #1f6fc4;
+  border-color: #1f6fc4;
+}
+:root.dark .el-button--primary:not(.is-plain):not(.is-text):not(.is-link):hover {
+  background-color: #2b7fd4;
+  border-color: #2b7fd4;
+}
+:root.dark .el-radio-button.is-active .el-radio-button__inner {
+  background-color: #1f6fc4;
+  border-color: #1f6fc4;
+  color: #ffffff;
+}
+
+/* ---- 跨页共用 ---- */
 .page { max-width: 1440px; margin: 0 auto; }
 .page-head {
   display: flex;
@@ -47,20 +160,27 @@ button, input, textarea, select { font: inherit; }
   margin: 8px 0 6px;
   font-size: clamp(22px, 2.4vw, 30px);
   letter-spacing: -.02em;
-  color: #eaf4ff;
+  color: var(--c-text-strong);
 }
-.lede { margin: 0; color: #91a5c0; font-size: 13.5px; line-height: 1.75; }
-.muted { color: #91a5c0; font-size: 12px; }
+.lede { margin: 0; color: var(--c-text-muted); font-size: 13.5px; line-height: 1.75; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
+.danger { color: var(--el-color-danger); }
 
-/* Element 细节微调：卡片与表格在深色下更贴近设计 */
+/* Element 细节微调 */
 .el-card { border-radius: 10px; }
 .el-card__header { padding: 14px 18px; }
-.el-table { --el-table-border-color: #1d2a41; }
+.el-table { --el-table-border-color: var(--el-border-color-light); }
 .el-drawer__body { padding: 16px 20px; }
 .el-descriptions__label { width: 96px; }
+/* Element 给 alert 标题的灰色较浅（浅色下 2.8:1），统一到正文色 */
+.el-alert__title { color: inherit; }
+.el-alert--info.is-light { color: var(--c-text-regular); }
 pre { font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
 
-/* 滚动条（深色细条） */
+/* 滚动条 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #24354f; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--el-border-color); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* 主题切换：给容器加过渡，避免硬切闪跳 */
+.app-shell, .sidebar, .topbar, .auth-shell { transition: background-color .2s ease, border-color .2s ease; }

@@ -78,7 +78,7 @@ async function submit() {
   align-items: center;
   min-height: 100vh;
   padding: 0 6vw;
-  background: radial-gradient(circle at 18% 30%, rgba(64, 158, 255, .1), transparent 55%), #0b1421;
+  background: radial-gradient(circle at 18% 30%, rgba(64, 158, 255, .1), transparent 55%), var(--c-bg);
 }
 
 .auth-art h1 {
@@ -86,24 +86,24 @@ async function submit() {
   font-size: clamp(30px, 3.2vw, 46px);
   line-height: 1.22;
   letter-spacing: -.03em;
-  color: #eaf4ff;
+  color: var(--c-text-strong);
 }
 .auth-art h1 em { color: var(--el-color-primary); font-style: normal; }
-.auth-art p { max-width: 520px; color: #91a5c0; font-size: 14px; line-height: 1.8; }
+.auth-art p { max-width: 520px; color: var(--c-text-muted); font-size: 14px; line-height: 1.8; }
 .auth-mark {
   display: inline-block; padding: 7px 12px; border-radius: 20px;
   background: rgba(64, 158, 255, .12); color: var(--el-color-primary);
   font-size: 11px; font-weight: 700; letter-spacing: .14em;
 }
-.auth-foot { margin-top: 26px; color: #647b99; font-size: 12px; }
+.auth-foot { margin-top: 26px; color: var(--c-text-faint); font-size: 12px; }
 
-.login-card { max-width: 420px; background: #101b2d; border-color: #22304a; }
-.eyebrow { font-size: 11px; letter-spacing: .14em; color: #647b99; }
-.login-card h2 { margin: 12px 0 6px; font-size: 26px; color: #eaf4ff; }
-.muted { margin-bottom: 18px; color: #91a5c0; font-size: 13px; }
+.login-card { max-width: 420px; background: var(--c-panel-bg); border-color: var(--el-border-color); }
+.eyebrow { font-size: 11px; letter-spacing: .14em; color: var(--c-text-faint); }
+.login-card h2 { margin: 12px 0 6px; font-size: 26px; color: var(--c-text-strong); }
+.muted { margin-bottom: 18px; color: var(--c-text-muted); font-size: 13px; }
 .login-error { margin-bottom: 14px; }
 .login-btn { width: 100%; }
-.login-note { margin-top: 14px; color: #647b99; font-size: 12px; }
+.login-note { margin-top: 14px; color: var(--c-text-faint); font-size: 12px; }
 
 @media (max-width: 900px) {
   .auth-shell { grid-template-columns: 1fr; padding: 40px 20px; }

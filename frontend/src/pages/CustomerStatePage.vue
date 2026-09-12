@@ -168,9 +168,9 @@ onMounted(load)
 .blocks { margin-bottom: 16px; }
 .json {
   margin: 0; white-space: pre-wrap; word-break: break-word;
-  font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; color: #d7e1ee;
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; color: var(--c-text);
 }
 .actions { display: flex; gap: 10px; }
-.muted { color: #91a5c0; font-size: 12px; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
 :deep(.el-table__row) { cursor: pointer; }
 </style>

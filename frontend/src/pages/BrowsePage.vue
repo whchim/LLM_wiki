@@ -140,12 +140,12 @@ onMounted(load)
 <style scoped>
 .mb { margin-bottom: 16px; }
 .filter-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-.muted { color: #91a5c0; font-size: 12px; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
 .pager { margin-top: 16px; justify-content: flex-end; }
 .preview pre {
   margin: 0; white-space: pre-wrap; word-break: break-word;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12.5px; line-height: 1.75; color: #d7e1ee;
+  font-size: 12.5px; line-height: 1.75; color: var(--c-text);
 }
 :deep(.el-table__row) { cursor: pointer; }
 </style>

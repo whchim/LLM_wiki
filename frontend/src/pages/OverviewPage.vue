@@ -133,20 +133,20 @@ onMounted(load)
 </template>
 
 <style scoped>
-.eyebrow { font-size: 12px; color: #7890ae; }
+.eyebrow { font-size: 12px; color: var(--c-text-dim); }
 .stat-row { margin: 26px 0 18px; }
 .stat-card { min-height: 124px; }
 .stat-card.clickable { cursor: pointer; transition: border-color .15s; }
 .stat-card.clickable:hover { border-color: var(--el-color-primary); }
-.stat-label { font-size: 12px; color: #91a5c0; }
-.stat-value { margin: 10px 0 6px; font-size: 32px; font-weight: 700; color: #eaf4ff; letter-spacing: -.02em; }
-.stat-sub { font-size: 11px; color: #7890ae; }
+.stat-label { font-size: 12px; color: var(--c-text-muted); }
+.stat-value { margin: 10px 0 6px; font-size: 32px; font-weight: 700; color: var(--c-text-strong); letter-spacing: -.02em; }
+.stat-sub { font-size: 11px; color: var(--c-text-dim); }
 .card-head { display: flex; align-items: center; justify-content: space-between; }
 .principle { margin-bottom: 18px; }
-.quote-mark { font-size: 40px; line-height: 1; color: var(--el-color-primary); opacity: .5; }
-.principle p { margin: 6px 0 12px; font-size: 13.5px; line-height: 1.9; color: #cddcef; }
+.quote-mark { font-size: 40px; line-height: 1; color: var(--c-brand-ink); opacity: .55; }
+.principle p { margin: 6px 0 12px; font-size: 13.5px; line-height: 1.9; color: var(--c-text); }
 .quick-list { display: flex; flex-direction: column; align-items: flex-start; }
 .quick-list .el-button { justify-content: flex-start; margin: 0; }
-.muted { color: #91a5c0; font-size: 12px; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
 :deep(.el-table__row) { cursor: pointer; }
 </style>

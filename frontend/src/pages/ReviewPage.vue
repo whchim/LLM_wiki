@@ -186,19 +186,19 @@ onMounted(load)
 <style scoped>
 .mb { margin-bottom: 14px; }
 .stat-row { margin-bottom: 22px; }
-.stat-label { font-size: 12px; color: #91a5c0; }
-.stat-value { margin-top: 6px; font-size: 26px; font-weight: 700; color: #eaf4ff; }
-.section { margin: 22px 0 12px; font-size: 15px; color: #cddcef; }
+.stat-label { font-size: 12px; color: var(--c-text-muted); }
+.stat-value { margin-top: 6px; font-size: 26px; font-weight: 700; color: var(--c-text-strong); }
+.section { margin: 22px 0 12px; font-size: 15px; color: var(--c-text); }
 .review-card { margin-bottom: 14px; }
 .card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .spacer { flex: 1; }
 .actions { display: flex; gap: 10px; margin-top: 14px; }
 .score-meta { margin: 10px 0 0; }
-.muted { color: #91a5c0; font-size: 12px; }
+.muted { color: var(--c-text-muted); font-size: 12px; }
 .danger { color: var(--el-color-danger); font-size: 12px; }
 .preview pre {
   margin: 0; white-space: pre-wrap; word-break: break-word;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12.5px; line-height: 1.75; color: #d7e1ee;
+  font-size: 12.5px; line-height: 1.75; color: var(--c-text);
 }
 </style>

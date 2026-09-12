@@ -99,16 +99,16 @@ onMounted(async () => { await load(); await loadReport() })
 
 <style scoped>
 .stat-row { margin-bottom: 22px; }
-.stat-label { font-size: 12px; color: #91a5c0; }
-.stat-value { margin-top: 6px; font-size: 30px; font-weight: 700; color: #eaf4ff; }
-.section { margin: 22px 0 12px; font-size: 15px; color: #cddcef; }
+.stat-label { font-size: 12px; color: var(--c-text-muted); }
+.stat-value { margin-top: 6px; font-size: 30px; font-weight: 700; color: var(--c-text-strong); }
+.section { margin: 22px 0 12px; font-size: 15px; color: var(--c-text); }
 .report-switch { margin-right: 12px; }
 .report-card { margin-top: 14px; }
-.report-name { margin-bottom: 10px; font-size: 12px; color: #7890ae; }
+.report-name { margin-bottom: 10px; font-size: 12px; color: var(--c-text-dim); }
 .report-body {
   margin: 0; white-space: pre-wrap; word-break: break-word;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12.5px; line-height: 1.75; color: #d7e1ee;
+  font-size: 12.5px; line-height: 1.75; color: var(--c-text);
 }
-.muted { color: #91a5c0; font-size: 12px; line-height: 1.8; }
+.muted { color: var(--c-text-muted); font-size: 12px; line-height: 1.8; }
 </style>
