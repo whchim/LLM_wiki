@@ -79,11 +79,19 @@ CREATE INDEX IF NOT EXISTS idx_trace_traceid ON trace_events (trace_id);
 - 终端点注入 `Depends(trace("search"))`；ok+error 都记录；`detail` 按类型个性化（search 记 query/hit、approve 记目标路径）
 - 只读端点（/search/missed、/tasks、/pending 等）不埋点
 
-### 4.3 Langfuse 最小探针（验证用，非侵入）
-- 新增 `requirements.txt` + `langfuse>=2.x`（**可选依赖**，用不上可不装）
-- 新增 `tools/langfuse_probe.py`：一个最小脚本，演示从 Claude Code 传 token 元数据到 Langfuse
-- **不改变现有纸条驱动主链路**：探针只是"如果你将来要 token 明细，这里是接入点"的最小验证，证明可行性 + 预留接口
-- 生产默认不开（需 LANGFUSE_PUBLIC_KEY/SECRET_KEY/HOST 三环境变量齐备才启用）
+### 4.3 Langfuse（v0.3 起：应用层真接；知识层仍走自建埋点）
+- **应用层（销售 Agent）已接入**：`core/llm_observability.py` 在 `core/model_port.py::OpenAICompatPort.complete()`
+  边界上报 generation（模型、input/output token、延迟、成败、错误摘要）；`api/trace.py` 每次请求生成
+  `trace_id` 绑定到上下文，**并写进 `trace_events.trace_id`**（此前一直是 NULL），于是 Langfuse 的 trace
+  与我们的 trace 记录用同一个 id 对得上。
+- **知识层（编译管道）不接**：编译由 watcher 以 headless 唤起 **Claude Code CLI**，LLM 调用在**外部进程**内，
+  拿不到内部 span/generation；能拿到的只有编译结束后的汇总（页数/缓存命中/token/耗时）→ 自建
+  `tools/record_compile_trace.py` → `trace_events`。要真接需 OTel 从 CLI 侧导出或改为 API 直调——重构而非接线。
+- **默认关闭、零侵入**：未配置 `LANGFUSE_PUBLIC_KEY/SECRET_KEY` 时**不 import SDK、不发网络请求**；
+  密钥齐全才惰性建客户端，SDK 构造/上报异常一律静默（不影响模型调用）。
+- **只上报元数据**：默认不含 prompt/completion 正文（正文即便已脱敏也无理由外发第三方 SaaS），
+  联调时用 `LANGFUSE_SEND_TEXT=1` 显式开启；`LANGFUSE_FLUSH_EACH=1` 可改为每次立即 flush。
+- `tools/langfuse_probe.py` 保留为**手工探针**（命令行验证链路），不再是唯一接入方式。
 
 ## 5. Streamlit 可观测性页
 
@@ -128,3 +136,5 @@ CREATE INDEX IF NOT EXISTS idx_trace_traceid ON trace_events (trace_id);
 ## Changelog
 - **v0.1**：误将 trace 埋到 /uploads（触发动作，非编译内部）。弃用。
 - **v0.2（2026-08-24）**：修正为观测**编译过程本身**——compile_workflow 末尾确定性采集（record_compile_trace.py）；保留检索/审核应用级 trace 支撑 4 指标；新增 Langfuse 最小探针（可选依赖，验证 token 价值，默认零侵入）；新增 trace_id 支持过程↔LLM 对账。
+
+- **v0.3（2026-09-14）**：**应用层真接 Langfuse**（原状只有手工探针，若写"全链路 Langfuse"经不起追问）。新增 `core/llm_observability.py`：未配置 `LANGFUSE_*` 时**不 import SDK、不发请求**（零侵入），密钥齐全才惰性建客户端，SDK 构造/上报异常一律静默；在 `model_port.OpenAICompatPort.complete()` 边界上报 generation（模型、token、延迟、成败、错误摘要），**默认不含正文**（`LANGFUSE_SEND_TEXT=1` 才外发）。同时把 `api/trace.py` 的 `trace_id` 落地：每次请求生成 uuid 绑定上下文**并写入 `trace_events.trace_id`**（此前恒为 NULL），使 Langfuse trace 与自建 trace 用同一 id 对账。`langfuse>=2.10` 进 requirements（无密钥时完全惰性）。新增 `tests/test_llm_observability.py`（7 例）。**知识层仍为自建埋点**：外部 CLI 进程拿不到内部 span，硬接需重构驱动方式（见 §4.3）。

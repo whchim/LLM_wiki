@@ -6,7 +6,7 @@
 
 > 本项目是**生产形态原型**，不宣称已经上线企业生产环境。已验证的是人工门禁、事件历史、敏感数值分层、幂等、过期/撤回/更正和 synthetic 回放；真实业务准确率、并发容量和合规仍需试点验证。
 
-[![tests](https://img.shields.io/badge/tests-334%20passed-green)]()
+[![tests](https://img.shields.io/badge/tests-341%20passed-green)]()
 [![status](https://img.shields.io/badge/status-Phase%202%20%E4%B8%BB%E4%BD%93%E5%AE%8C%E6%88%90-brightgreen)]()
 [![phase](https://img.shields.io/badge/phase-SP1%7ESP5%20%E5%B7%B2%E4%BA%A4%E4%BB%98-blue)]()
 
@@ -216,7 +216,7 @@ docker compose run --rm api pytest tests -q
 
 - **发现并修正 3 处 PRD 内部不一致**（架构层数、MCP Server 取舍、编译触发机制）
 - **开发范式收敛**：SDD（编译产物/检索，输入输出可形式化）+ TDD（审核确定性规则/数据层/API）；LLM 输出非确定部分明确不做 BDD
-- **334 个 pytest 用例**：DDL 幂等、双写一致性、审核规则边界（中文紧邻漏报/金额阈值）、上传批处理补偿、驳回重提流程、索引重建鲁棒性、JWT 鉴权与越权、审计落库、搜索缺口聚合、启动自愈、pgvector 混合检索与降级、缺口判据、LLM 输出契约校验，以及应用层的状态转移约束、敏感数值分层、澄清轮次预算、提交内容级幂等、状态建议双引擎、合成回放评测
+- **341 个 pytest 用例**：DDL 幂等、双写一致性、审核规则边界（中文紧邻漏报/金额阈值）、上传批处理补偿、驳回重提流程、索引重建鲁棒性、JWT 鉴权与越权、审计落库、搜索缺口聚合、启动自愈、pgvector 混合检索与降级、缺口判据、LLM 输出契约校验、LLM 可观测上报边界，以及应用层的状态转移约束、敏感数值分层、澄清轮次预算、提交内容级幂等、状态建议双引擎、合成回放评测
 - **CI（GitHub Actions）**：真实 PG 全量测试 + Prompt 退化检测（契约短语 + golden 样例）+ 检索回归门禁（可公开合成语料，`--no-vector` 离线零 key）；真实黄金集的完整评测含向量通道，仍仅本地执行
 - **检索评测结论**：融合 MRR@10=1.00 / Recall@10=0.95，**纯 grep 通道仅 0.22**；缺口检出力 3/3（本地黄金集 14 条，详见 SP4 设计文档）
 
@@ -241,7 +241,7 @@ docker compose run --rm api pytest tests -q
 ├── .claude/              # hook + /process-triggers、/ask 命令 + skills/
 ├── schema.sql            # PostgreSQL DDL（幂等：知识层 7 表 + 应用层领域表 + pgvector + users）
 ├── init.sh               # 幂等初始化（目录树 + 建表 + SCHEMA.md）
-├── tests/                # 334 个 pytest 用例（连真实 PostgreSQL 隔离库；含可公开合成检索语料）
+├── tests/                # 341 个 pytest 用例（连真实 PostgreSQL 隔离库；含可公开合成检索语料）
 ```
 
 ---

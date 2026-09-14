@@ -2,10 +2,12 @@
 
 设计要点：
 - **只做一次调用**：不重试（重试与契约校验在 sales_clarification_runtime 里，避免两处重试叠加）
-- **零第三方依赖**：stdlib urllib，与 api/embedding.py 同风格（项目一贯做法）
+- **模型调用本身零第三方依赖**：stdlib urllib，与 api/embedding.py 同风格（项目一贯做法）；
+  可选的可观测上报走独立模块 `llm_observability`（未配置 LANGFUSE_* 时不 import、不发请求）
 - **可替换**：任何 OpenAI 兼容端点（DashScope / DeepSeek / vLLM / Ollama）都能用，
   换供应商只改环境变量，业务代码与契约校验不动
-- **不隐瞒 token 消耗**：返回 input/output tokens 供 ClarificationRun 累计审计
+- **不隐瞒 token 消耗**：返回 input/output tokens 供 ClarificationRun 累计审计，
+  并在同一处上报给 Langfuse（只上报元数据，不上报正文——正文外发需显式开启）
 
 环境变量：
     MODEL_BASE_URL   默认 https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -17,9 +19,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
+import llm_observability
 from sales_clarification_runtime import ModelResponse
 
 
@@ -61,7 +65,28 @@ class OpenAICompatPort:
         # 事实抽取与契约输出要求稳定，默认温度 0；采样自由度越低越容易过 schema
         self._temperature = temperature
 
-    def complete(self, *, system_prompt: str, user_prompt: str, max_tokens: int) -> ModelResponse:
+    def complete(self, *, system_prompt: str, user_prompt: str, max_tokens: int,
+                 operation: str = "chat.completions") -> ModelResponse:
+        """调用一次模型；成功/失败都上报一次元数据（未启用 Langfuse 时是纯 no-op）。"""
+        started = time.perf_counter()
+        try:
+            response = self._complete_once(system_prompt=system_prompt, user_prompt=user_prompt,
+                                           max_tokens=max_tokens)
+        except Exception as exc:
+            llm_observability.record_generation(
+                model=self._model_override or _config()[2], operation=operation,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                error=f"{type(exc).__name__}: {exc}")
+            raise
+        llm_observability.record_generation(
+            model=response.model_version, operation=operation,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            input_tokens=response.input_tokens, output_tokens=response.output_tokens,
+            request_id=response.request_id, system_prompt=system_prompt,
+            user_prompt=user_prompt, completion=response.raw_text)
+        return response
+
+    def _complete_once(self, *, system_prompt: str, user_prompt: str, max_tokens: int) -> ModelResponse:
         base, key, model, timeout = _config()
         if not key:
             raise ModelPortError("未配置 MODEL_API_KEY / DASHSCOPE_API_KEY，无法调用模型")

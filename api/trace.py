@@ -5,16 +5,20 @@
 - status（ok / error，业务异常与未捕获异常都记 error）
 - detail（按 span_type 个性化，由端点通过 request.state.trace_detail 提供）
 - operator（当前登录用户；未登录记 system）
+- trace_id（每次请求一个 uuid，并绑定到上下文：同一请求内的模型调用上报 Langfuse 时复用该 id，
+  于是"这次接口调用花了多少 token"可以在 Langfuse 里按 trace 对上这条 trace_events 记录）
 
 写库失败静默（打印日志），绝不阻断主操作。
 """
 import json
 import logging
 import time
+import uuid
 
 from fastapi import Depends, Request
 
 import db
+import llm_observability
 from api import auth
 
 logger = logging.getLogger("llmwiki.trace")
@@ -40,7 +44,8 @@ def _operator(request: Request) -> str:
 
 
 def _record(span_type: str, operation: str | None, status: str,
-            latency_ms: int, detail: dict | None, operator: str) -> None:
+            latency_ms: int, detail: dict | None, operator: str,
+            trace_id: str | None = None) -> None:
     detail = detail or {}
     detail.setdefault("error", None)
     try:
@@ -48,8 +53,8 @@ def _record(span_type: str, operation: str | None, status: str,
             conn.execute(
                 "INSERT INTO trace_events (span_type, trace_id, operation, status, "
                 "latency_ms, detail, operator) "
-                "VALUES (%s, NULL, %s, %s, %s, %s, %s)",
-                (span_type, operation, status, latency_ms,
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (span_type, trace_id, operation, status, latency_ms,
                  json.dumps(detail, ensure_ascii=False), operator))
     except Exception:
         logger.exception("trace 写入失败（不阻断主操作）：span_type=%s", span_type)
@@ -66,6 +71,11 @@ def trace(span_type: str):
     ):
         # 先取用户，供端点与 trace 使用（注入到 request.state 供端点读取）
         request.state.current_user = user
+        # 每次请求一个关联 id：写进 trace_events，并绑定到上下文，
+        # 让同一请求内的 Langfuse 上报（core/llm_observability）能与这条 trace 对上
+        trace_id = uuid.uuid4().hex
+        token = llm_observability.bind_trace_id(trace_id)
+        request.state.trace_id = trace_id
         start = time.perf_counter()
         status = "ok"
         error_msg = None
@@ -81,6 +91,7 @@ def trace(span_type: str):
             detail = getattr(request.state, "trace_detail", None) or {}
             detail.setdefault("error", error_msg)
             _record(span_type, detail.pop("operation", None), status,
-                    latency_ms, detail, _operator(request))
+                    latency_ms, detail, _operator(request), trace_id)
+            llm_observability.reset_trace_id(token)
 
     return dependency

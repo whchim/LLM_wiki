@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **应用层（垂直落地）**——销售客户状态 Agent 生产形态原型（销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件），配套销售事实澄清 Agent（信息不足时先追问而非猜状态）。需求唯一来源 `docs/SA-01_销售客户状态Agent_业务契约.md`。核心原则：**不让模型直接改客户事实**——Agent 只提建议，`StateEvent` 是事实唯一写入口，`CurrentState` 是可重建投影。
 - 应用层复用知识层的 FastAPI/JWT/审计/PG 地基；**知识层不反向依赖应用层**。当前知识库为空骨架（企业业务内容已脱敏移除），知识层作为背景知识保留。
 
-**当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台、转人工处置闭环、状态建议规则+模型双引擎）。**pytest 收集 334 个用例** + CI（测试 + Prompt 退化检测 + 检索合成集门禁）+ LLM 输出契约校验。
+**当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台、转人工处置闭环、状态建议规则+模型双引擎）。**pytest 收集 341 个用例** + CI（测试 + Prompt 退化检测 + 检索合成集门禁）+ LLM 输出契约校验。
 
 **快速启动**：`bash init.sh && docker compose up -d`（三容器：`db`=PostgreSQL 16+pgvector、`api`=FastAPI、`web`=Vue 工作台（nginx 托管 + `/api` 反代）；容器启动自愈建目录/表/初始管理员，幂等）。工作台 `:8501`；开发态前端 `cd frontend && npm run dev`（:5173，Vite 代理到 :8000）。知识浏览：工作台「全部条目」页在线预览正文，图谱用 Obsidian 打开 `vault/`。
 
@@ -85,6 +85,7 @@ Vue 工作台（nginx 托管 + /api 反代） ←HTTP→ api/（FastAPI）→ Po
 - **触发文件信号**：API/工作台写 `vault/_triggers/compile_*.md` / `review_*.md`（原子写：tmp + mv），watcher 轮询消费（headless 唤起 Claude Code），处理后移入 `done/`；失败批处理补偿为 failed，不残留悬挂任务
 - **概念页审核流**：编译产物先入 `pending_review/`（status=pending）→ AI 六维度审核（确定性两维正则+代码、模糊四维 LLM）→ 人工在工作台通过/驳回 → 通过后移入 `NEXUS/概念/`（status=active）；资源摘要不过审直接发布
 - **混合检索（SP4）**：`/search` 双通道 grep+pgvector → 加权融合（0.5/0.3，后续以评测为准）；embedding 故障自动降级 grep-only。**改检索逻辑后必跑 `tools/eval_search.py`**：CI 跑合成集门禁（`--check --no-vector --kb tests/fixtures/retrieval_kb --gold tests/fixtures/retrieval_gold.md`，11 条），本地另跑真实黄金集完整评测（14 条：MRR@10/Recall@10/缺口检出力，含向量通道）
+- **LLM 调用可观测（Langfuse 可选）**：应用层模型调用在 `core/model_port.py` 边界上报 Langfuse（`core/llm_observability.py`）——**未配置 `LANGFUSE_*` 时不 import SDK、不发请求**，SDK 异常一律静默（不阻断模型调用）；**默认只上报元数据**（模型/token/延迟/成败），正文外发需显式 `LANGFUSE_SEND_TEXT=1`。`api/trace.py` 每次请求生成 `trace_id` 并写入 `trace_events.trace_id`（此前恒为 NULL），Langfuse trace 与自建 trace 同 id 对账。**知识层编译链路仍是自建埋点**：编译由 headless Claude Code CLI 在外部进程执行，拿不到内部 span，真接需改用 OTel 导出或 API 直调（`docs/WIKI-35` §4.3）
 - **SHA256 指纹缓存**：同指纹的 done 记录存在则跳过 LLM 调用，标记 cached
 - **LLM 输出契约校验**：prompts 里的 JSON 契约代码化（`core/output_schema.py` + `core/clarification_schema.py`；详见 `docs/VAL-01_LLM_输出校验_设计说明.md`）。质量门禁已进 agent loop：review 写库前 / compile 落盘前先自检（`tools/validate_llm_output.py`，违例重试 1 次、再败不落地）；`/reviews` 响应含 `ai_scores_valid` 标记。**Prompt 退化检测**：`tools/prompt_regression.py`（契约短语存在性 + golden 样例回归，已在 CI）
 - **自增长**：搜索缺口写入 search_logs（判据 SP4 v0.1.2 已落地：grep 零命中 且 向量最高相似度 < τ=0.52，τ 由黄金集标定；向量不可用自动退化为 grep 零命中）→ 看板展示缺口 Top 20 → 驱动补文档

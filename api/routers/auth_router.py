@@ -1,5 +1,6 @@
 """认证路由：POST /auth/login、GET /auth/me。"""
 import time
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -15,19 +16,21 @@ def login(body: LoginRequest) -> LoginResponse:
     """登录：校验密码 → 签发 JWT。密码错/用户不存在统一 401（防枚举）。
 
     登录是无 token 可访问的端点，不能注入依赖——端点内显式记录 trace
-    （operator 记尝试用户名，detail 统一失败文案，不做枚举泄漏）。"""
+    （operator 记尝试用户名，detail 统一失败文案，不做枚举泄漏）。
+    trace_id 与 trace() 依赖保持一致：每端口调用一个关联 id。"""
     start = time.perf_counter()
+    trace_id = uuid.uuid4().hex
     user = auth.get_user(body.username)
     if user is None or not auth.verify_password(body.password, user["password_hash"]):
         trace_mod._record("login", "login", "error",
                           int((time.perf_counter() - start) * 1000),
-                          {"error": "认证失败"}, body.username)
+                          {"error": "认证失败"}, body.username, trace_id)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     token = auth.create_access_token(user["username"], user["role"])
     audit_log(user["username"], "login")
     trace_mod._record("login", "login", "ok",
                       int((time.perf_counter() - start) * 1000),
-                      {"role": user["role"]}, user["username"])
+                      {"role": user["role"]}, user["username"], trace_id)
     return LoginResponse(
         access_token=token,
         expires_in=auth.TOKEN_TTL_HOURS * 3600,
