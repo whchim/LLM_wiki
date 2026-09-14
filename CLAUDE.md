@@ -10,9 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **应用层（垂直落地）**——销售客户状态 Agent 生产形态原型（销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件），配套销售事实澄清 Agent（信息不足时先追问而非猜状态）。需求唯一来源 `docs/SA-01_销售客户状态Agent_业务契约.md`。核心原则：**不让模型直接改客户事实**——Agent 只提建议，`StateEvent` 是事实唯一写入口，`CurrentState` 是可重建投影。
 - 应用层复用知识层的 FastAPI/JWT/审计/PG 地基；**知识层不反向依赖应用层**。当前知识库为空骨架（企业业务内容已脱敏移除），知识层作为背景知识保留。
 
-**当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台）。**pytest 收集 203 个用例** + CI（测试 + Prompt 退化检测）+ LLM 输出契约校验。
+**当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台与转人工处置闭环）。**pytest 收集 310 个用例** + CI（测试 + Prompt 退化检测）+ LLM 输出契约校验。
 
 **快速启动**：`bash init.sh && docker compose up -d`（三容器：`db`=PostgreSQL 16+pgvector、`api`=FastAPI、`web`=Vue 工作台（nginx 托管 + `/api` 反代）；容器启动自愈建目录/表/初始管理员，幂等）。工作台 `:8501`；开发态前端 `cd frontend && npm run dev`（:5173，Vite 代理到 :8000）。知识浏览：工作台「全部条目」页在线预览正文，图谱用 Obsidian 打开 `vault/`。
+
+> ⚠️ **改了代码必须 `docker compose up -d --build`，不是 `up -d`**：`api/`、`core/`、`schema.sql` 与前端构建产物都是 **COPY 进镜像**（非挂载），只重启不会带出新代码——症状是"新接口 404 / 页面没有新按钮"。改 schema 无需手工迁移（`ensure_schema()` 启动时幂等执行 `schema.sql`）；改前端也可用 `npm run dev` 免重建。
 
 **测试**：`python -m pytest tests -q`。需真实 PostgreSQL（`docker compose up -d db`，测试库 `llmwiki_test`）；无 PG 可用 `PYTEST_SKIP_NO_DB=1` 跳过。隔离目录固定为 `tests/_isolated/`（conftest 覆盖 tmp_path，不依赖系统 %TEMP%），在受限沙箱/CI 环境同样可跑。**CI（GitHub Actions，`.github/workflows/ci.yml`）**：push/PR 触发，起 pgvector service 跑全量测试 + `tools/prompt_regression.py` 退化检测。**检索回归门禁仅本地**：黄金集（docs/VAL-03_检索评测_黄金集.md，基于真实业务内容）为本地面试资产、不进公开仓库，改检索/融合逻辑后本地跑 `python tools/eval_search.py --check`。
 
@@ -75,6 +77,9 @@ Vue 工作台（nginx 托管 + /api 反代） ←HTTP→ api/（FastAPI）→ Po
 - **规则/模型分工**：确定性可断言的部分交程序（完整性/敏感信息正则、金额阈值、状态转移约束、权限），模糊语义交模型（质量/合规/去重/职务归属、事实抽取与追问）
 - **销售状态机**：7 状态（`new_lead`/`contacted`/`need_confirmed`/`solution_eval`/`commercial_negotiation`/`won`/`lost_or_paused`），每状态有最低证据要求与默认有效期；证据不足必须输出 `needs_review` 不得猜测；`won` 需强证据；撤回/更正/过期均**追加新事件**，不删除历史
 - **澄清优先于猜测**：销售事实澄清 Agent 在信息不足时先按 SA-11 契约追问（槽位 + 追问规则），而不是直接给状态建议
+- **转人工闭环**：澄清会话转人工后不再"看得见动不了"——reviewer/admin 可 `POST /clarifications/sessions/{id}/resolve`：`closed`（关闭，原因必填 → `cancelled` + `resolution_note`）或 `reopened`（补充事实后重开继续）。**轮次口径（方案 A）**：`max_rounds` = 最多**追问**轮数（2），用尽后仍允许**一次收尾判定**（只出结论、服务端强制 `conclusion_coerced`），Agent 运行上限 = `max_rounds + 1`；**最后一轮追问生成后会话保持 open（可答，不得"问了不给答"）**；人工**不加轮次**（`round_count > max_rounds` 只能关闭）；人工处置**只动会话与回答，不改客户状态**；另：上一轮问题未答完时 `advance` 不重复推进（防重复触发烧轮次）
+- **状态建议生成（最后一公里）**：`POST /clarifications/sessions/{id}/proposal` 从**两种**会话状态生成建议——`ready_for_proposal`（澄清完成）与 `needs_human_review`（转人工，强制 `decision='needs_review'`、置信度 ≤0.5，不把"没判出来"包装成"建议推进"）→ `state_proposals(pending)` → 负责人在「客户状态」确认 → `state_events`。生成用**确定性规则**（`core/sales_state_rules.py`：命中 SA-01 最低证据 + 状态机**逐级推进不跳跃**；证据不足/信号冲突标 `needs_review`，不猜状态），服务层 `core/state_proposal_service.py` 保证幂等（同洽谈已有 pending 则复用）。**只生成建议，绝不改客户状态**；`open`（仍在澄清）拒绝生成；关闭会话≠交付负责人（交接必须靠生成建议）；**交接与结果都可见**：会话详情报 `pending_proposal`（工作台显示"已交负责人"），客户总览 `GET /customer-states/customers`（阶段 + 待确认数，确认后立即体现）；LLM 版适配器 `sales_state_agent` 已就绪未接线
+- **删除与归档**：澄清会话/状态建议的删除是**软删除（归档）+ 仅管理员**（`DELETE /clarifications/sessions/{id}`、`POST .../restore`；写 `deleted_at`/`deleted_by`，进审计）；归档范围含会话产生的建议，读取路径默认排除已归档。⚠️ **`state_events`/`state_decisions` 永不删除**——客户事实只能追加更正/撤回/过期（SA-02），归档不动事实链（有测试锁定）
 - **敏感数值分层**：正文占位符 + `sensitive_numeric_values` 受限表；Prompt/trace/普通日志/向量索引中不得出现精确金额；授权角色在审计下可恢复
 - **触发文件信号**：API/工作台写 `vault/_triggers/compile_*.md` / `review_*.md`（原子写：tmp + mv），watcher 轮询消费（headless 唤起 Claude Code），处理后移入 `done/`；失败批处理补偿为 failed，不残留悬挂任务
 - **概念页审核流**：编译产物先入 `pending_review/`（status=pending）→ AI 六维度审核（确定性两维正则+代码、模糊四维 LLM）→ 人工在工作台通过/驳回 → 通过后移入 `NEXUS/概念/`（status=active）；资源摘要不过审直接发布
