@@ -34,6 +34,17 @@ REQUIRED_PHRASES = {
     "prompts/answer_prompt.md": [
         "严格基于检索结果", "引用可追溯", "诚实告知边界", "引用来源",
     ],
+    # 销售域两个 prompt 的硬性契约（与 SA-01/SA-11 契约、sales_state_agent 校验代码对齐）
+    "prompts/sales_clarification_prompt.md": [
+        "schema_version", "clarification.v1", "ready_for_proposal", "needs_clarification",
+        "insufficient_evidence", "human_review", "逐字", "evidence", "prompt_version",
+    ],
+    "prompts/sales_state_prompt.md": [
+        "new_lead", "contacted", "need_confirmed", "solution_eval",
+        "commercial_negotiation", "won", "lost_or_paused",
+        "逐级推进", "不允许跳跃", "needs_review", "low_confidence",
+        "逐字一致", "risk_flags", "prompt_version",
+    ],
 }
 
 # golden 样例回归：文件名 → (校验函数, 期望违反数>0?)
@@ -87,7 +98,8 @@ def main() -> int:
     if p_fails or c_fails:
         print("[FAIL] prompt 契约存在退化风险")
         return 1
-    print("[OK] 3 个 prompt 契约短语完整、4 个 golden 样例与输出校验互相锁定")
+    print(f"[OK] {len(REQUIRED_PHRASES)} 个 prompt 契约短语完整、"
+          f"{len(CASES)} 个 golden 样例与输出校验互相锁定")
     return 0
 
 

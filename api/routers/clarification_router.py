@@ -173,18 +173,21 @@ def advance(session_id: str, user: auth.User = Depends(auth.get_current_user)):
 
 
 @router.post("/sessions/{session_id}/proposal", response_model=dict)
-def create_state_proposal(session_id: str, request: Request,
+def create_state_proposal(session_id: str, request: Request, mode: str = "auto",
                           user: auth.User = Depends(auth.get_current_user),
                           _trace: auth.User = Depends(trace_mod.trace("clarification_proposal"))):
-    """把澄清结论转成**待确认状态建议**（确定性规则，不调模型）。
+    """把澄清结论转成**待确认状态建议**（建议不修改客户状态）。
 
+    `mode`：auto（默认——规则优先，规则判不出（证据不足/信号冲突）时才请 LLM 复核）
+    / rules（强制规则）/ llm（强制模型）。模型不可用或未过契约校验时 auto 回退规则，
+    并在响应里标注 `used` 与 `llm_error`（可观测）。
     边界：只创建建议——客户状态仍只能由负责人在「客户状态」确认后经
     state_decisions → state_events 写入。同一洽谈已有 pending 建议则复用（幂等）。
     """
     if not _allowed(user, session_id):
         raise HTTPException(status_code=403, detail="无权为该澄清会话生成状态建议")
     try:
-        result = state_proposal_service.generate_proposal_for_session(session_id)
+        result = state_proposal_service.generate_proposal_for_session(session_id, mode=mode)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc).strip("'\"")) from exc
     except ValueError as exc:
@@ -192,9 +195,11 @@ def create_state_proposal(session_id: str, request: Request,
     proposal = result.get("proposal") or {}
     audit_log(user.username, "clarification_proposal", target_path=session_id,
               detail={"generated": result.get("generated"), "reused": result.get("reused"),
+                      "mode": mode, "used": result.get("used"),
                       "proposed_state": result.get("proposed_state") or proposal.get("proposed_state")})
     request.state.trace_detail = {"operation": "clarification_proposal", "session_id": session_id,
-                                 "generated": result.get("generated"), "reused": result.get("reused")}
+                                 "generated": result.get("generated"), "reused": result.get("reused"),
+                                 "mode": mode, "used": result.get("used")}
     return result
 
 

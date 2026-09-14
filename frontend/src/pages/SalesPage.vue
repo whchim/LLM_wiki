@@ -225,10 +225,15 @@ async function generateProposal() {
     if (!res.generated) {
       ElMessage.warning(`未能生成建议：${res.reason || '证据不足'}`)
     } else if (res.reused) {
-      const state = res.proposal?.proposed_state || ''
+      const state = stateName(res.proposal?.proposed_state)
       ElMessage.info(`该洽谈已有待确认建议（${state}），未重复创建`)
     } else {
-      ElMessage.success(`已生成待确认建议：${res.proposed_state} —— 请负责人在「客户状态」确认`)
+      // 判定方式用业务语言说清楚：规则能判就规则判（零成本），判不出才请模型复核
+      const how = (res.used || '').startsWith('llm') ? '模型复核判定' : '规则判定'
+      ElMessage.success(`已生成待确认建议：${stateName(res.proposed_state)}（${how}）—— 请负责人在「客户状态」确认`)
+      if (res.llm_error) {
+        ElMessage.warning(`模型复核没有得出结论（${res.llm_error}），本次结论来自规则判定，请负责人留意`)
+      }
     }
     selected.value = await api.session(selected.value.session_id)
     await load()
