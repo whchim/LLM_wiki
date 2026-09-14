@@ -319,6 +319,27 @@ def withdraw_current_state(customer_id: str, actor: str, reason: str) -> dict:
         return {"event_id": event_id, "customer_id": customer_id, "state": target_state}
 
 
+def list_customers_with_state(limit: int = 100) -> list[dict]:
+    """客户当前状态总览（运营视角）：当前阶段 + 有效期 + 待确认建议数。
+
+    只读投影：`current_states` 由 `state_events` 重建，不是权威事实本身；
+    没有状态的客户（尚未确认过任何建议）也会列出，state 为 None。
+    """
+    limit = max(1, min(limit, 500))
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT c.customer_id, c.display_name_redacted, cs.state, cs.effective_at, cs.valid_until, "
+            "       COALESCE(pp.cnt, 0) AS pending_proposals "
+            "FROM customers c "
+            "LEFT JOIN current_states cs ON cs.customer_id = c.customer_id "
+            "LEFT JOIN (SELECT cv.customer_id, COUNT(*) AS cnt "
+            "           FROM state_proposals p JOIN conversations cv ON cv.conversation_id = p.conversation_id "
+            "           WHERE p.status='pending' AND p.deleted_at IS NULL GROUP BY cv.customer_id) pp ON pp.customer_id = c.customer_id "
+            "ORDER BY cs.updated_at DESC NULLS LAST, c.created_at DESC LIMIT %s", (limit,)).fetchall()
+    keys = ("customer_id", "display_name_redacted", "state", "effective_at", "valid_until", "pending_proposals")
+    return [dict(zip(keys, row)) for row in rows]
+
+
 def get_current_state(customer_id: str) -> dict | None:
     with db.get_conn() as conn:
         row = conn.execute(
@@ -341,7 +362,7 @@ def list_pending_proposals(limit: int = 100) -> list[dict]:
             "p.next_action, p.valid_until, p.needs_human_confirmation, p.risk_flags, "
             "p.model_version, p.prompt_version, p.created_at "
             "FROM state_proposals p JOIN conversations c ON c.conversation_id=p.conversation_id "
-            "WHERE p.status='pending' ORDER BY p.created_at ASC LIMIT %s", (limit,)).fetchall()
+            "WHERE p.status='pending' AND p.deleted_at IS NULL ORDER BY p.created_at ASC LIMIT %s", (limit,)).fetchall()
         keys = ["proposal_id", "conversation_id", "customer_id", "current_state", "proposed_state",
                 "decision", "confidence", "evidence_refs", "reasoning_summary", "next_action",
                 "valid_until", "needs_human_confirmation", "risk_flags", "model_version",

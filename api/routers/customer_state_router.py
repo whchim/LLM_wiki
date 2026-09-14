@@ -15,6 +15,16 @@ def pending_proposals(limit: int = Query(100, ge=1, le=500),
     return customer_state.list_pending_proposals(limit)
 
 
+@router.get("/customers", response_model=list[dict])
+def customers(limit: int = Query(100, ge=1, le=500),
+              user: auth.User = Depends(auth.require_roles("reviewer", "admin"))):
+    """客户当前状态总览（运营视角）：负责人确认后的结果在这里可见。
+
+    注意：本路由必须声明在 `/{customer_id}` 之前，否则会被当成客户标识匹配。
+    """
+    return customer_state.list_customers_with_state(limit)
+
+
 @router.get("/{customer_id}", response_model=dict)
 def current_state(customer_id: str, user: auth.User = Depends(auth.get_current_user)):
     result = customer_state.get_current_state_with_customer(customer_id)
