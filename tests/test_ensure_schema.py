@@ -44,4 +44,5 @@ def test_ensure_schema_is_idempotent(tmp_path, monkeypatch):
                          "trace_events", "health_reports", "customers", "conversations",
                          "evidence", "state_proposals", "state_decisions", "state_events",
                          "current_states", "sensitive_numeric_values", "clarification_sessions",
-                         "clarification_turns", "clarification_answers", "customer_aliases"}
+                         "clarification_turns", "clarification_answers", "customer_aliases",
+                         "tenant_model_configs", "llm_usage"}

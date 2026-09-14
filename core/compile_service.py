@@ -1,4 +1,4 @@
-"""应用内编译引擎：把 `workflows/compile_workflow.md` 的步骤**代码化**。
+﻿"""应用内编译引擎：把 `workflows/compile_workflow.md` 的步骤**代码化**。
 
 ## 为什么需要它（设计文档：docs/WIKI-70_Phase2_应用内编译引擎_设计文档.md）
 
@@ -54,6 +54,8 @@ MAX_INPUT_CHARS = 40000
 RESOURCE_DIR = "NEXUS/资源"
 CONCEPT_PENDING_DIR = "pending_review"
 ENGINE = "api"
+# L4：模型用途标签（用于租户模型配置的 purpose 分级与用量记账）
+PURPOSE = "compile"
 
 
 def kb_root() -> Path:
@@ -264,7 +266,7 @@ def compile_one(raw_relpath: str, *, port=None, max_tokens: int | None = None,
     result.task_id = task_id
 
     if port is None:
-        port = model_port.default_port()
+        port = model_port.for_tenant(purpose=PURPOSE)
     if port is None:
         if own_task:
             db.update_compile_task(task_id, "failed",
@@ -374,7 +376,7 @@ def compile_batch(raw_relpaths: list[str], *, port=None, max_tokens: int | None 
     started = time.perf_counter()
     trace_id = uuid.uuid4().hex
     if port is None:
-        port = model_port.default_port()
+        port = model_port.for_tenant(purpose=PURPOSE)
     results = [compile_one(path, port=port, max_tokens=max_tokens) for path in raw_relpaths]
 
     concept_paths = [p for r in results for p in r.concept_paths]

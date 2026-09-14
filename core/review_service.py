@@ -1,4 +1,4 @@
-"""应用内审核引擎：把 `workflows/review_workflow.md` 的六维度审核**代码化**。
+﻿"""应用内审核引擎：把 `workflows/review_workflow.md` 的六维度审核**代码化**。
 
 分工（与项目"规则/模型分工"一致）：
 - **确定性两维交代码**：维度一完整性（`rules.check_completeness`）、维度五敏感信息（`rules.check_sensitive`）；
@@ -37,6 +37,8 @@ NEXUS_DIR = "NEXUS"
 DEDUP_CANDIDATES = 5
 CANDIDATE_EXCERPT = 200
 ENGINE = "api"
+# L4：模型用途标签（租户可为审核单独配便宜模型）
+PURPOSE = "review"
 
 VERDICTS = ("approved", "rejected", "needs_human_review")
 
@@ -220,7 +222,7 @@ def review_one(nexus_path: str, *, port=None, submitter: str = "system",
                       verdict_model=None, submitter=submitter, started=started)
 
     if port is None:
-        port = model_port.default_port()
+        port = model_port.for_tenant(purpose=PURPOSE)
     if port is None:
         result.error = "未配置模型（MODEL_API_KEY / DASHSCOPE_API_KEY）"
         return result
@@ -335,7 +337,7 @@ def review_batch(nexus_paths: list[str], *, port=None, submitter: str = "system"
     """批量审核并汇总（供 worker 调用）。"""
     started = time.perf_counter()
     if port is None:
-        port = model_port.default_port()
+        port = model_port.for_tenant(purpose=PURPOSE)
     results = [review_one(path, port=port, submitter=submitter) for path in nexus_paths]
     return {
         "reviewed": sum(1 for r in results if r.status == "reviewed"),

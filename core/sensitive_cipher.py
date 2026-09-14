@@ -119,6 +119,18 @@ class SensitiveNumericCipher:
             raise CipherError("密文校验失败：密钥不匹配、密文被篡改，或引用/字段被搬移") from exc
 
 
+    def encrypt_secret(self, ref_id: str, kind: str, plaintext: str) -> str:
+        """加密**密钥类**明文（L4：租户自带模型 API Key）。
+
+        与 `encrypt` 同一套 AES-GCM（AAD 绑定 ref_id|kind），只是语义命名更清楚：
+        密钥与数值走同一条受控加密路径，轮换机制（v1/v2）也共用。
+        """
+        return self.encrypt(ref_id, f"secret:{kind}", plaintext)
+
+    def decrypt_secret(self, ref_id: str, kind: str, ciphertext: str) -> str:
+        return self.decrypt(ref_id, f"secret:{kind}", ciphertext)
+
+
 def require_ready() -> None:
     """启动时校验：生产环境必须配置密钥，否则拒绝启动（与 JWT_SECRET 同策略）。"""
     if is_available():

@@ -32,6 +32,7 @@ SPAN_TYPES = {
     "clarification_session_create", "clarification_answer", "sales_intake",
     "clarification_resolve", "clarification_proposal",
     "clarification_session_delete", "clarification_session_restore",
+    "model_config_update", "model_config_delete",
 }
 
 

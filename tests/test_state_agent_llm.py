@@ -1,4 +1,4 @@
-"""状态 Agent（LLM 版）接线测试。
+﻿"""状态 Agent（LLM 版）接线测试。
 
 覆盖三层：
 1. 运行时（纯函数/mock port）：解析、偏移按 quote 重定位、来源作用域、契约拒绝与重试；
@@ -208,7 +208,7 @@ def test_auto_mode_skips_llm_when_rules_can_conclude(client, admin_headers, monk
     """规则能判就不调模型——避免为每条建议白付一次 LLM 成本。"""
     def _boom():
         raise AssertionError("规则已能判定时不应调用模型")
-    monkeypatch.setattr(model_port, "default_port", _boom)
+    monkeypatch.setattr(model_port, "for_tenant", lambda **_: _boom())
 
     ctx = _ready(client, admin_headers, "llm-001", "customer-llm-001", [_claim("客户确认正在评估方案")])
     body = client.post(f"/clarifications/sessions/{ctx['session_id']}/proposal",
@@ -225,7 +225,7 @@ def test_auto_mode_asks_llm_for_ambiguous_case(client, admin_headers, monkeypatc
 
     port = ScriptedPort([_valid_output(state="need_confirmed", current="contacted",
                                        customer=customer)])
-    monkeypatch.setattr(model_port, "default_port", lambda: port)
+    monkeypatch.setattr(model_port, "for_tenant", lambda **_: port)
 
     # claims 里没有规则认识的关键词 → 规则只给 needs_review → 触发 LLM 复核
     ctx = _ready(client, admin_headers, "llm-002", customer, [_claim("客户想再了解一下我们的方案")])
@@ -242,7 +242,7 @@ def test_auto_mode_falls_back_to_rules_when_model_fails(client, admin_headers, m
     customer = "customer-llm-003"
     _set_current_state(client, admin_headers, customer, "contacted")
     port = ScriptedPort(["这不是 JSON", "这也不是 JSON"])
-    monkeypatch.setattr(model_port, "default_port", lambda: port)
+    monkeypatch.setattr(model_port, "for_tenant", lambda **_: port)
 
     ctx = _ready(client, admin_headers, "llm-003", customer, [_claim("客户想再了解一下我们的方案")])
     response = client.post(f"/clarifications/sessions/{ctx['session_id']}/proposal", headers=admin_headers)
@@ -254,7 +254,7 @@ def test_auto_mode_falls_back_to_rules_when_model_fails(client, admin_headers, m
 
 
 def test_llm_mode_errors_when_model_unavailable(client, admin_headers, monkeypatch):
-    monkeypatch.setattr(model_port, "default_port", lambda: None)
+    monkeypatch.setattr(model_port, "for_tenant", lambda **_: None)
     ctx = _ready(client, admin_headers, "llm-004", "customer-llm-004", [_claim("客户确认正在评估方案")])
     response = client.post(f"/clarifications/sessions/{ctx['session_id']}/proposal",
                            headers=admin_headers, params={"mode": "llm"})
@@ -267,7 +267,7 @@ def test_human_review_session_forces_needs_review_in_llm_path(client, admin_head
     import db
     customer = "customer-llm-005"
     port = ScriptedPort([_valid_output(state="new_lead", current=None, customer=customer)])
-    monkeypatch.setattr(model_port, "default_port", lambda: port)
+    monkeypatch.setattr(model_port, "for_tenant", lambda **_: port)
 
     ctx = _intake(client, admin_headers, "llm-005", customer)
     db.append_clarification_turn(ctx["session_id"], "human_review", {"error": ["模型或契约失败"]}, 0)

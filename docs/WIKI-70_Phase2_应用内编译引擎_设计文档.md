@@ -185,7 +185,40 @@ L1 只解决"引擎能进容器"。要在云端做多租户，还差三层：
 > 每租户一个 worker + 一份挂载即可；若要单实例服务多租户，需要把 compile/review 服务的路径解析
 > 接到租户（设计见 §5.4 待补）。JWT 里的 tenant 在用户被迁移租户后会短暂过期（需重新登录）。
 
-### L4 模型配置进库（当前是进程级单例）
+### L4 模型配置进库 —— ✅ 已实现
+
+**改造前实测**：模型配置全是**进程级环境变量**（`MODEL_API_KEY / MODEL_BASE_URL / MODEL_NAME /
+MODEL_TIMEOUT`、向量共用 `DASHSCOPE_API_KEY`），一份配置服务所有租户、改配置要重启、密钥明文放 env、
+**没有按租户的用量与配额**。
+
+| 表 | 字段要点 | 作用 |
+|---|---|---|
+| `tenant_model_configs` | `tenant_id + purpose`（唯一）、`provider/base_url/model`、`api_key_ciphertext + api_key_key_version`、`max_tokens/temperature`、`daily_token_quota`、`enabled` | 租户自带模型与密钥；密钥 AES-GCM 加密落库（**AAD 绑定 `tenant:purpose`**，密文搬移会解密失败） |
+| `llm_usage` | `tenant_id, purpose, model, input/output_tokens, latency_ms, ok, trace_id, created_at` | 每次调用记账 → 配额拦截 + 账单看板；`tenant_id` 进 RLS，租户只看自己的 |
+
+**端口工厂**：`model_port.for_tenant(tenant_id=None, purpose="default")` —— **先查库、查不到回落环境变量**，
+两者都没有返回 `None`（单租户部署与本地开发行为不变）。查找顺序：精确 `(tenant, purpose)` →
+`(tenant, 'default')` → env。用途标签已接到调用方：编译 `purpose=compile`、审核 `purpose=review`、
+状态建议 `purpose=state`（于是"审核用便宜模型、编译用强模型"只是配置问题）。
+
+**记账与配额**：`ModelPort.complete()` 在调用前后写 `llm_usage`（**失败也记**，便于统计错误率），
+并在调用**之前**检查当日 token 是否超 `daily_token_quota` —— 超额直接报错（**不静默降级**：编译侧落成
+可重试失败任务，销售侧转人工）。记账失败只告警，不阻断模型调用（与 trace/Langfuse 同款纪律）。
+
+**管理接口**（仅 admin）：`GET/PUT/DELETE /admin/model-configs`（列出**永不返回密钥明文**，只给
+`has_key`；`api_key` 省略=保留原密钥、空串=清空）、`GET /admin/llm-usage`（当日 token + 按 purpose 汇总）。
+密钥加密复用 L3 已有的受控加密器（`sensitive_cipher.encrypt_secret`，与数值加密同一条 AES-GCM 路径与轮换机制）。
+
+> 未做：模型**成本**估算（只有 token，没有按模型单价的金额换算）；配额**月度/按租户分组**的细粒度策略；
+> 配额超限目前是硬失败，未做"降级到便宜模型"的可配置策略。
+
+### L3.5 文件分区（单实例服务多租户的前置）—— 未做
+
+当前 `KB_ROOT` 仍是**进程级根**，多租户部署时每租户一个 worker + 一份挂载即可；
+若要让**单实例**同时服务多个租户，需要把编译/审核服务的路径解析接到租户：
+`kb_root(tenant_id) = <KB_ROOT>/tenants/<tenant_id>`，默认租户仍用 `<KB_ROOT>` 本身（本地无感）。
+受影响面：`compile_service.kb_root()`、`review_service.kb_root()`、`scan_new_raw`、`ops` 的
+approve/reject 与 index 更新、`/uploads` 的落盘路径、`search_router._kb_root()`。
 
 实测现状：`MODEL_API_KEY / MODEL_BASE_URL / MODEL_NAME / MODEL_TIMEOUT /
 DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变量，
@@ -281,3 +314,13 @@ DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变
    trace_id 关联）；⑥ 修掉队列原语把租户写死 'default' 的 bug（单测抓到）；⑦ 迁移工具的裸连接需自设租户
    （默认值 NULL 被 NOT NULL 拦下，fail-closed）。新增 `tests/test_tenant_isolation.py`（应用层上下文 + 受限角色
    下的 RLS 读写隔离，缺角色时明确 skip）。
+- **v0.4（2026-09-14）**：**L4 模型配置进库 + 用量记账**。① 新增 `tenant_model_configs`
+   （`tenant_id+purpose` 唯一；密钥 AES-GCM 加密落库、AAD 绑定 `tenant:purpose`）与 `llm_usage`
+   （每次调用记账，进 RLS）；② `model_port.for_tenant()`：**先查库、查不到回落环境变量**
+   （精确 purpose → tenant default → env），用途标签接到调用方（compile/review/state）；
+   ③ `ModelPort.complete()` 前后记账（失败也记）并在调用前做**配额拦截**（超额直接报错，不静默降级；
+   记账失败只告警不阻断）；④ 管理接口 `GET/PUT/DELETE /admin/model-configs`（**永不返回密钥明文**，
+   `api_key` 省略=保留、空串=清空）与 `GET /admin/llm-usage`；⑤ `sensitive_cipher` 增加
+   `encrypt_secret/decrypt_secret`（与数值加密同一条 AES-GCM 路径与轮换机制）。
+   新增 `tests/test_tenant_model_config.py`（11 例：配置优先级、purpose 分级、密钥加密与密文搬移失效、
+   省略/清空语义、成功与失败都记账、记账失败不阻断调用、配额拦截且模型零调用、租户隔离、接口权限与脱敏）。

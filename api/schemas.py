@@ -132,3 +132,21 @@ class CustomerAliasRequest(BaseModel):
     """建立"内部中文简称 → 脱敏代号"的绑定；别名由服务端做敏感信息检查。"""
     alias: str
     customer_id: str
+
+
+class ModelConfigRequest(BaseModel):
+    """L4：租户模型配置。
+
+    `api_key` 语义：**省略 = 保留原密钥**（改模型名不必重传）；**空串 = 清空**（回落环境变量）；
+    非空 = 以 AES-GCM 加密落库（AAD 绑定 tenant:purpose，密文搬移会校验失败）。
+    `daily_token_quota` 为 None 表示不限量。
+    """
+    purpose: str = "default"
+    provider: str = "openai_compatible"
+    model: str
+    base_url: str | None = None
+    api_key: str | None = None
+    max_tokens: int = 4000
+    temperature: float = 0.0
+    daily_token_quota: int | None = None
+    enabled: bool = True

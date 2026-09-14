@@ -332,6 +332,50 @@ ALTER TABLE users ALTER COLUMN tenant_id SET DEFAULT current_setting('app.tenant
 UPDATE users SET tenant_id = 'default' WHERE tenant_id IS NULL;
 ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL;
 
+-- ============================================================
+-- L4 模型配置进库 + 用量记账（幂等）
+-- ------------------------------------------------------------
+-- 现状问题：模型配置全是**进程级环境变量**（MODEL_API_KEY/MODEL_BASE_URL/MODEL_NAME/
+-- MODEL_TIMEOUT、向量用的 DASHSCOPE_API_KEY），一份配置服务所有租户：租户无法自带 key、
+-- 改配置要重启、密钥明文放 env、**没有按租户的用量与配额**。
+-- 目标：租户级配置进库（密钥 AES-GCM 加密），调用前后按租户记账与拦截。
+--   · tenant_model_configs：按 (tenant_id, purpose) 一条；purpose=default 兜底，
+--     可给 compile/review/answer/clarification/state 分别配模型；
+--   · llm_usage：每次模型调用的 token/延迟/成败记账，供配额拦截与账单看板；
+--   · 两者都进 RLS（下面的策略数组已包含），租户只能看到自己的配置与用量。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS tenant_model_configs (
+    id                    INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id             TEXT NOT NULL,
+    purpose               TEXT NOT NULL DEFAULT 'default',
+    provider              TEXT NOT NULL DEFAULT 'openai_compatible',
+    base_url              TEXT,
+    model                 TEXT NOT NULL,
+    api_key_ciphertext    TEXT,
+    api_key_key_version   TEXT,
+    max_tokens            INTEGER NOT NULL DEFAULT 4000,
+    temperature           REAL NOT NULL DEFAULT 0,
+    daily_token_quota     INTEGER,                 -- NULL = 不限
+    enabled               BOOLEAN NOT NULL DEFAULT true,
+    updated_by            TEXT,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, purpose)
+);
+
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id     TEXT NOT NULL,
+    purpose       TEXT NOT NULL DEFAULT 'default',
+    model         TEXT,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    latency_ms    INTEGER NOT NULL DEFAULT 0,
+    ok            BOOLEAN NOT NULL DEFAULT true,
+    trace_id      TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_tenant ON llm_usage(tenant_id, created_at DESC);
+
 DO $$
 DECLARE t TEXT;
 BEGIN
@@ -340,7 +384,8 @@ BEGIN
     'contributors','conflicts','customer_aliases','trace_events','health_reports',
     'customers','conversations','evidence','clarification_sessions','clarification_turns',
     'clarification_answers','state_proposals','state_decisions','state_events',
-    'current_states','sensitive_numeric_values'
+    'current_states','sensitive_numeric_values',
+    'tenant_model_configs','llm_usage'
   ]
   LOOP
     EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS tenant_id TEXT', t);

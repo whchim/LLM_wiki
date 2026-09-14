@@ -730,6 +730,103 @@ def latest_compile_task(raw_path: str) -> dict | None:
     return dict(zip(keys, row))
 
 
+# ---- L4：租户模型配置与用量记账 ----
+CONFIG_FIELDS = ("tenant_id", "purpose", "provider", "base_url", "model",
+                 "api_key_ciphertext", "api_key_key_version", "max_tokens",
+                 "temperature", "daily_token_quota", "enabled", "updated_by", "updated_at")
+
+
+def upsert_tenant_model_config(*, tenant_id: str, purpose: str = "default", model: str,
+                               provider: str = "openai_compatible", base_url: str | None = None,
+                               api_key_ciphertext: str | None = None,
+                               api_key_key_version: str | None = None,
+                               max_tokens: int = 4000, temperature: float = 0.0,
+                               daily_token_quota: int | None = None,
+                               enabled: bool = True, updated_by: str | None = None) -> int:
+    """写入/更新租户模型配置（密钥只存密文）。
+
+    `api_key_ciphertext=None` 表示"不动已有密钥"（改模型名不必重传 key）；
+    传空串则清空密钥（回落环境变量）。
+    """
+    tenant = tenant_id or current_tenant()
+    with get_conn() as conn:
+        row = conn.execute(
+            """INSERT INTO tenant_model_configs
+               (tenant_id, purpose, provider, base_url, model, api_key_ciphertext,
+                api_key_key_version, max_tokens, temperature, daily_token_quota, enabled, updated_by)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (tenant_id, purpose) DO UPDATE SET
+                 provider=EXCLUDED.provider, base_url=EXCLUDED.base_url, model=EXCLUDED.model,
+                 api_key_ciphertext=CASE WHEN %s THEN tenant_model_configs.api_key_ciphertext
+                                         ELSE EXCLUDED.api_key_ciphertext END,
+                 api_key_key_version=CASE WHEN %s THEN tenant_model_configs.api_key_key_version
+                                          ELSE EXCLUDED.api_key_key_version END,
+                 max_tokens=EXCLUDED.max_tokens, temperature=EXCLUDED.temperature,
+                 daily_token_quota=EXCLUDED.daily_token_quota, enabled=EXCLUDED.enabled,
+                 updated_by=EXCLUDED.updated_by, updated_at=now()
+               RETURNING id""",
+            (tenant, purpose, provider, base_url, model, api_key_ciphertext,
+             api_key_key_version, max_tokens, temperature, daily_token_quota, enabled, updated_by,
+             api_key_ciphertext is None, api_key_ciphertext is None)).fetchone()
+    return row[0]
+
+
+def list_tenant_model_configs(tenant_id: str | None = None) -> list[dict]:
+    """列出该租户的模型配置（**只返回密文与是否已配密钥，绝不返回明文**）。"""
+    tenant = tenant_id or current_tenant()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT tenant_id, purpose, provider, base_url, model, api_key_key_version, "
+            "       (api_key_ciphertext IS NOT NULL) AS has_key, max_tokens, temperature, "
+            "       daily_token_quota, enabled, updated_by, updated_at "
+            "FROM tenant_model_configs WHERE tenant_id=%s ORDER BY purpose", (tenant,)).fetchall()
+    keys = ("tenant_id", "purpose", "provider", "base_url", "model", "api_key_key_version",
+            "has_key", "max_tokens", "temperature", "daily_token_quota", "enabled",
+            "updated_by", "updated_at")
+    return [dict(zip(keys, r)) for r in rows]
+
+
+def delete_tenant_model_config(tenant_id: str, purpose: str = "default") -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM tenant_model_configs WHERE tenant_id=%s AND purpose=%s",
+                     (tenant_id or current_tenant(), purpose))
+
+
+def record_llm_usage(*, tenant_id: str, purpose: str, model: str | None,
+                     input_tokens: int = 0, output_tokens: int = 0, latency_ms: int = 0,
+                     ok: bool = True, trace_id: str | None = None) -> None:
+    """记一次模型调用（token/延迟/成败）。调用方负责静默失败，本函数不吞异常。"""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO llm_usage (tenant_id, purpose, model, input_tokens, output_tokens, "
+            "latency_ms, ok, trace_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (tenant_id or current_tenant(), purpose, model, input_tokens or 0, output_tokens or 0,
+             latency_ms or 0, ok, trace_id))
+
+
+def llm_usage_today(tenant_id: str | None = None) -> int:
+    """该租户当日已用 token（输入+输出），配额拦截与看板用。"""
+    with get_conn() as conn:
+        return int(conn.execute(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM llm_usage "
+            "WHERE tenant_id=%s AND created_at >= date_trunc('day', now())",
+            (tenant_id or current_tenant(),)).fetchone()[0])
+
+
+def llm_usage_summary(tenant_id: str | None = None, days: int = 7) -> list[dict]:
+    """按 purpose 汇总最近 N 天用量（看板）。"""
+    tenant = tenant_id or current_tenant()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT purpose, count(*) AS calls, COALESCE(SUM(input_tokens),0), "
+            "       COALESCE(SUM(output_tokens),0), COALESCE(SUM(latency_ms),0), "
+            "       count(*) FILTER (WHERE NOT ok) "
+            "FROM llm_usage WHERE tenant_id=%s AND created_at >= now() - make_interval(days => %s) "
+            "GROUP BY purpose ORDER BY 4 DESC", (tenant, days)).fetchall()
+    return [{"purpose": r[0], "calls": r[1], "input_tokens": int(r[2]), "output_tokens": int(r[3]),
+             "latency_ms": int(r[4]), "errors": r[5]} for r in rows]
+
+
 def list_recent_compile_tasks(limit: int = 50) -> list[dict]:
     """最近的编译任务（upload 页状态表）。"""
     with get_conn() as conn:

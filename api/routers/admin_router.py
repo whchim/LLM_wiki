@@ -1,11 +1,12 @@
-"""管理路由：重建索引 + embedding 回填（仅 admin）。"""
+"""管理路由：重建索引 + embedding 回填 + 租户模型配置/用量（仅 admin）。"""
 import json
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 import db
 from api import auth, embedding, trace as trace_mod
 from api.audit import audit_log
+from api.schemas import ModelConfigRequest
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -131,3 +132,75 @@ def reports(kind: str = Query("growth", pattern="^(growth|health)$"),
     latest = Path(found[0])
     return {"kind": kind, "exists": True, "name": latest.name,
             "content": latest.read_text(encoding="utf-8", errors="replace")}
+
+
+# ---- L4：租户模型配置与用量（仅 admin / reviewer）----
+def _tenant_of(user: auth.User, tenant: str | None) -> str:
+    """管理员可显式指定租户，缺省用自己所属租户（不跨租户瞎猜）。"""
+    return (tenant or user.tenant_id or db.DEFAULT_TENANT).strip() or db.DEFAULT_TENANT
+
+
+@router.get("/model-configs", response_model=list[dict])
+def list_model_configs(tenant: str | None = Query(None),
+                       user: auth.User = Depends(auth.require_roles("admin"))):
+    """列出某租户的模型配置（**只返回是否已配密钥，永不返回密钥明文**）。"""
+    return db.list_tenant_model_configs(_tenant_of(user, tenant))
+
+
+@router.put("/model-configs", response_model=dict)
+def upsert_model_config(body: ModelConfigRequest, request: Request,
+                        tenant: str | None = Query(None),
+                        user: auth.User = Depends(auth.require_roles("admin")),
+                        _t: auth.User = Depends(trace_mod.trace("model_config_update"))):
+    """写入/更新租户模型配置；`api_key` 以 AES-GCM 加密落库（AAD 绑定租户与用途）。
+
+    `api_key` 省略 = 保留原密钥（改模型名不必重传 key）；传空串 = 清空（回落环境变量）。
+    """
+    import sensitive_cipher
+
+    target = _tenant_of(user, tenant)
+    ciphertext = None
+    key_version = None
+    if body.api_key is not None:
+        if body.api_key.strip():
+            if not sensitive_cipher.is_available():
+                raise HTTPException(status_code=409,
+                                    detail="未配置 SENSITIVE_FIELD_KEY，无法加密存储租户密钥")
+            cipher = sensitive_cipher.SensitiveNumericCipher()
+            ciphertext = cipher.encrypt_secret(f"{target}:{body.purpose}", "model_api_key",
+                                               body.api_key.strip())
+            key_version = cipher.current_version
+        else:
+            ciphertext = ""              # 显式清空密钥
+    config_id = db.upsert_tenant_model_config(
+        tenant_id=target, purpose=body.purpose, model=body.model, provider=body.provider,
+        base_url=body.base_url, api_key_ciphertext=ciphertext, api_key_key_version=key_version,
+        max_tokens=body.max_tokens, temperature=body.temperature,
+        daily_token_quota=body.daily_token_quota, enabled=body.enabled, updated_by=user.username)
+    audit_log(user.username, "model_config_update", target_path=f"{target}:{body.purpose}",
+              detail={"config_id": config_id, "model": body.model,
+                      "key_updated": body.api_key is not None})
+    request.state.trace_detail = {"operation": "model_config_update", "tenant": target,
+                                  "purpose": body.purpose}
+    return {"config_id": config_id, "tenant_id": target, "purpose": body.purpose,
+            "model": body.model, "key_updated": body.api_key is not None}
+
+
+@router.delete("/model-configs", response_model=dict)
+def delete_model_config(tenant: str | None = Query(None), purpose: str = Query("default"),
+                        user: auth.User = Depends(auth.require_roles("admin"))):
+    """删除租户模型配置（删除后该租户回落环境变量）。"""
+    target = _tenant_of(user, tenant)
+    db.delete_tenant_model_config(target, purpose)
+    audit_log(user.username, "model_config_delete", target_path=f"{target}:{purpose}")
+    return {"deleted": True, "tenant_id": target, "purpose": purpose}
+
+
+@router.get("/llm-usage", response_model=dict)
+def llm_usage(tenant: str | None = Query(None), days: int = Query(7, ge=1, le=90),
+              user: auth.User = Depends(auth.require_roles("reviewer", "admin"))):
+    """租户模型用量（配额拦截与账单看板的读取面）。"""
+    target = _tenant_of(user, tenant)
+    return {"tenant_id": target, "days": days,
+            "today_tokens": db.llm_usage_today(target),
+            "by_purpose": db.llm_usage_summary(target, days)}

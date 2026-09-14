@@ -1,4 +1,4 @@
-"""把澄清结论变成待确认状态建议——补齐"澄清 → 状态建议"这最后一公里。
+﻿"""把澄清结论变成待确认状态建议——补齐"澄清 → 状态建议"这最后一公里。
 
 链路：
     澄清会话 ready_for_proposal
@@ -45,7 +45,7 @@ def _parse_valid_until(value) -> datetime | None:
 def _infer_with_llm(*, customer_id: str, content_redacted: str, current_state: str | None,
                     claims: list[dict], answer_texts: dict[str, str]) -> tuple[dict | None, str | None]:
     """用状态 Agent 判定一次；返回 (推断结果, 失败原因)。不可用/失败时由调用方回退规则。"""
-    port = model_port.default_port()
+    port = model_port.for_tenant(purpose="state")
     if port is None:
         return None, "未配置模型（MODEL_API_KEY / DASHSCOPE_API_KEY）"
     try:
