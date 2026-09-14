@@ -10,13 +10,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **应用层（垂直落地）**——销售客户状态 Agent 生产形态原型（销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件），配套销售事实澄清 Agent（信息不足时先追问而非猜状态）。需求唯一来源 `docs/SA-01_销售客户状态Agent_业务契约.md`。核心原则：**不让模型直接改客户事实**——Agent 只提建议，`StateEvent` 是事实唯一写入口，`CurrentState` 是可重建投影。
 - 应用层复用知识层的 FastAPI/JWT/审计/PG 地基；**知识层不反向依赖应用层**。当前知识库为空骨架（企业业务内容已脱敏移除），知识层作为背景知识保留。
 
-**当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台、转人工处置闭环、状态建议规则+模型双引擎）。**pytest 收集 320 个用例** + CI（测试 + Prompt 退化检测）+ LLM 输出契约校验。
+**当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台、转人工处置闭环、状态建议规则+模型双引擎）。**pytest 收集 327 个用例** + CI（测试 + Prompt 退化检测 + 检索合成集门禁）+ LLM 输出契约校验。
 
 **快速启动**：`bash init.sh && docker compose up -d`（三容器：`db`=PostgreSQL 16+pgvector、`api`=FastAPI、`web`=Vue 工作台（nginx 托管 + `/api` 反代）；容器启动自愈建目录/表/初始管理员，幂等）。工作台 `:8501`；开发态前端 `cd frontend && npm run dev`（:5173，Vite 代理到 :8000）。知识浏览：工作台「全部条目」页在线预览正文，图谱用 Obsidian 打开 `vault/`。
 
 > ⚠️ **改了代码必须 `docker compose up -d --build`，不是 `up -d`**：`api/`、`core/`、`schema.sql` 与前端构建产物都是 **COPY 进镜像**（非挂载），只重启不会带出新代码——症状是"新接口 404 / 页面没有新按钮"。改 schema 无需手工迁移（`ensure_schema()` 启动时幂等执行 `schema.sql`）；改前端也可用 `npm run dev` 免重建。
 
-**测试**：`python -m pytest tests -q`。需真实 PostgreSQL（`docker compose up -d db`，测试库 `llmwiki_test`）；无 PG 可用 `PYTEST_SKIP_NO_DB=1` 跳过。隔离目录固定为 `tests/_isolated/`（conftest 覆盖 tmp_path，不依赖系统 %TEMP%），在受限沙箱/CI 环境同样可跑。**CI（GitHub Actions，`.github/workflows/ci.yml`）**：push/PR 触发，起 pgvector service 跑全量测试 + `tools/prompt_regression.py` 退化检测。**检索回归门禁仅本地**：黄金集（docs/VAL-03_检索评测_黄金集.md，基于真实业务内容）为本地面试资产、不进公开仓库，改检索/融合逻辑后本地跑 `python tools/eval_search.py --check`。
+**测试**：`python -m pytest tests -q`。需真实 PostgreSQL（`docker compose up -d db`，测试库 `llmwiki_test`）；无 PG 可用 `PYTEST_SKIP_NO_DB=1` 跳过。隔离目录固定为 `tests/_isolated/`（conftest 覆盖 tmp_path，不依赖系统 %TEMP%），在受限沙箱/CI 环境同样可跑。**CI（GitHub Actions，`.github/workflows/ci.yml`）**：push/PR 触发，起 pgvector service 跑全量测试 + `tools/prompt_regression.py` 退化检测。**检索回归门禁分两层**：CI 跑**合成集**（`tests/fixtures/retrieval_kb/` + `tests/fixtures/retrieval_gold.md`，`--check --no-vector`，离线零 key，11 条：精确 6/语义 2/缺口 3，锁缺口判据与 draft 不参与检索）；真实黄金集（docs/VAL-03，基于真实业务内容）是**本地/面试资产、不进公开仓库**，改检索/融合逻辑后本地跑 `python tools/eval_search.py --check`（完整含向量通道；⚠️ 公开仓库的 `vault/` 是空骨架，此命令会明确报「语料为空」而非给出误导性的 Recall=0，公开仓库请跑上面的合成集门禁）。`tests/test_eval_search_gate.py` 另锁"门禁自身真的会拦"（标注写错必须失败）。
 
 ## 文档体系（文档驱动开发）
 
@@ -83,7 +83,7 @@ Vue 工作台（nginx 托管 + /api 反代） ←HTTP→ api/（FastAPI）→ Po
 - **敏感数值分层**：正文占位符 + `sensitive_numeric_values` 受限表；Prompt/trace/普通日志/向量索引中不得出现精确金额；授权角色在审计下可恢复
 - **触发文件信号**：API/工作台写 `vault/_triggers/compile_*.md` / `review_*.md`（原子写：tmp + mv），watcher 轮询消费（headless 唤起 Claude Code），处理后移入 `done/`；失败批处理补偿为 failed，不残留悬挂任务
 - **概念页审核流**：编译产物先入 `pending_review/`（status=pending）→ AI 六维度审核（确定性两维正则+代码、模糊四维 LLM）→ 人工在工作台通过/驳回 → 通过后移入 `NEXUS/概念/`（status=active）；资源摘要不过审直接发布
-- **混合检索（SP4）**：`/search` 双通道 grep+pgvector → 加权融合（0.5/0.3，后续以评测为准）；embedding 故障自动降级 grep-only。**改检索逻辑后必跑 `tools/eval_search.py`（黄金集 14 条：MRR@10/Recall@10/缺口检出力）**
+- **混合检索（SP4）**：`/search` 双通道 grep+pgvector → 加权融合（0.5/0.3，后续以评测为准）；embedding 故障自动降级 grep-only。**改检索逻辑后必跑 `tools/eval_search.py`**：CI 跑合成集门禁（`--check --no-vector --kb tests/fixtures/retrieval_kb --gold tests/fixtures/retrieval_gold.md`，11 条），本地另跑真实黄金集完整评测（14 条：MRR@10/Recall@10/缺口检出力，含向量通道）
 - **SHA256 指纹缓存**：同指纹的 done 记录存在则跳过 LLM 调用，标记 cached
 - **LLM 输出契约校验**：prompts 里的 JSON 契约代码化（`core/output_schema.py` + `core/clarification_schema.py`；详见 `docs/VAL-01_LLM_输出校验_设计说明.md`）。质量门禁已进 agent loop：review 写库前 / compile 落盘前先自检（`tools/validate_llm_output.py`，违例重试 1 次、再败不落地）；`/reviews` 响应含 `ai_scores_valid` 标记。**Prompt 退化检测**：`tools/prompt_regression.py`（契约短语存在性 + golden 样例回归，已在 CI）
 - **自增长**：搜索缺口写入 search_logs（判据 SP4 v0.1.2 已落地：grep 零命中 且 向量最高相似度 < τ=0.52，τ 由黄金集标定；向量不可用自动退化为 grep 零命中）→ 看板展示缺口 Top 20 → 驱动补文档

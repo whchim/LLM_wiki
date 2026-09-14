@@ -1,22 +1,30 @@
 """SP4 混合检索评测：在黄金集上跑三通道对比（grep / vector / 融合），输出检索指标。
 
 用法：
-    python tools/eval_search.py
-    python tools/eval_search.py --detail          # 逐查询打印 fused 排序前 K
+    python tools/eval_search.py                    # 本地黄金集（docs/VAL-03，面试资产，不进仓库）
+    python tools/eval_search.py --detail           # 逐查询打印 fused 排序前 K
+    python tools/eval_search.py --check            # 门禁：断言失败 → 非零退出
+    # CI 合成集（可公开、离线、零 API key）：
+    python tools/eval_search.py --check --no-vector \
+        --kb tests/fixtures/retrieval_kb --gold tests/fixtures/retrieval_gold.md
 
 环境：
 - 完整评测需 PostgreSQL（pgvector 已回填 embedding）＋ DASHSCOPE_API_KEY
 - 未配置 key：vector/fused 标注 N/A（fused 自动降级 grep-only），仅 grep 列有效
 - DB 不可用/embedding 失败：_vector_search 返回 None（降级），评测不崩——与线上降级铁律一致
+- `--kb` 指定合成语料时用 `--no-vector`：合成页面不在 PG 向量索引里，向量通道只会返回
+  真实 vault 的条目、污染合成集指标（向量/融合回归由 tests/test_search_vector.py 的 mock 覆盖）
 
 设计要点：
 1. 评测直接复用 api.routers.search_router 的检索原语（_grep/_vector_search/_fuse），
    **不经过 /search 端点**——避免评测查询写入 search_logs 污染知识缺口看板
    （评测查询 ≠ 用户真实查询，且缺口判据要求"零命中才记缺口"）。
-2. 黄金集见 docs/VAL-03_检索评测_黄金集.md；预期命中为人工标注的"知识上应命中"条目。
+2. 黄金集见 docs/VAL-03_检索评测_黄金集.md（本地）；可公开的合成集见
+   tests/fixtures/retrieval_gold.md + tests/fixtures/retrieval_kb/（CI 门禁用）。
 3. 指标：MRR@10（首个预期命中的位置倒数）、Recall@10（top10 中预期命中的比例）、
    缺口检出力（缺口查询被误报为命中的比例）。
 """
+import os
 import re
 import sys
 from pathlib import Path
@@ -36,25 +44,27 @@ GOLD_PATH = ROOT / "docs" / "VAL-03_检索评测_黄金集.md"
 K = 10  # MRR/Recall 的截断深度
 
 
-def parse_gold() -> list[dict]:
+def parse_gold(gold_path: Path | None = None) -> list[dict]:
     """解析黄金集 Markdown 表格 → [{n, query, type, expected, note}]。"""
-    text = GOLD_PATH.read_text(encoding="utf-8")
+    text = (gold_path or GOLD_PATH).read_text(encoding="utf-8")
     rows = []
     for line in text.splitlines():
         m = re.match(r"^\| (\d+) \| (.+?) \| (精确|语义|缺口) \| (.*?) \| (.*?) \|$", line)
         if not m:
             continue
-        expected = [p.strip() for p in m.group(4).split("；") if p.strip()]
+        # 缺口行用"（零命中）"占位：归一为空列表，避免它被当成一个"预期路径"参与比对
+        expected = [p.strip() for p in m.group(4).split("；")
+                    if p.strip() and p.strip() not in ("（零命中）", "(零命中)")]
         rows.append({"n": int(m.group(1)), "query": m.group(2).strip(),
                      "type": m.group(3), "expected": expected,
                      "note": m.group(5).strip()})
     return rows
 
 
-def run_query(q: str) -> dict:
+def run_query(q: str, *, allow_vector: bool = True) -> dict:
     """对单条查询跑三通道，返回排序后的 path 列表、通道可用性与向量最高相似度。"""
     grep_hits = sr._grep(q)
-    vec_hits = sr._vector_search(q)          # None = 不可用/失败（降级）
+    vec_hits = sr._vector_search(q) if allow_vector else None   # None = 不可用/失败（降级）
     fused = sr._fuse(grep_hits, vec_hits)
     max_sim = max((v["similarity"] for v in vec_hits), default=None) if vec_hits else None
     return {
@@ -63,6 +73,23 @@ def run_query(q: str) -> dict:
         "vec_max_sim": max_sim,
         "fused": [e["path"] for e in fused],
     }
+
+
+def _count_active_pages() -> int:
+    """KB/NEXUS 下 `status: active` 的 .md 页面数——用于区分"检索退化"与"语料为空"。"""
+    nexus = os.path.join(sr._kb_root(), "NEXUS")
+    count = 0
+    for dirpath, _, files in os.walk(nexus):
+        for fn in files:
+            if not fn.endswith(".md"):
+                continue
+            try:
+                with open(os.path.join(dirpath, fn), encoding="utf-8") as f:
+                    if sr._is_active(f.read()):
+                        count += 1
+            except (OSError, UnicodeDecodeError):
+                continue
+    return count
 
 
 def mrr_at_k(rank: list[str], expected: list[str], k: int = K) -> float:
@@ -82,25 +109,46 @@ def avg(xs: list[float]) -> float:
     return sum(xs) / len(xs) if xs else 0.0
 
 
-def main(detail: bool = False, check: bool = False) -> None:
-    rows = parse_gold()
+def main(detail: bool = False, check: bool = False, *, kb: str | None = None,
+         gold: str | None = None, no_vector: bool = False) -> int:
+    """跑评测并（`check=True` 时）执行门禁；返回进程退出码（0 通过 / 1 失败）。"""
+    gold_path = Path(gold) if gold else GOLD_PATH
+    if kb:
+        # search_router._kb_root() 每次调用动态读 env，故此处设置即生效（不依赖 import 顺序）
+        os.environ["KB_ROOT"] = str(Path(kb).resolve())
+    allow_vector = not no_vector
+    rows = parse_gold(gold_path)
     if not rows:
-        print(f"黄金集解析失败或无数据：{GOLD_PATH}")
-        sys.exit(1)
+        print(f"黄金集解析失败或无数据：{gold_path}")
+        return 1
 
-    vec_ok = embedding.is_available()
+    vec_ok = embedding.is_available() and allow_vector
+    active_pages = _count_active_pages()
     print("=== 检索评测 | 黄金集 ===")
-    print(f"来源: {GOLD_PATH.name}")
+    print(f"来源: {gold_path}")
+    print(f"语料: {sr._kb_root()}（status: active 页面 {active_pages} 个）")
     print(f"规模: {len(rows)} 条（精确 {sum(1 for r in rows if r['type']=='精确')} / "
           f"语义 {sum(1 for r in rows if r['type']=='语义')} / "
           f"缺口 {sum(1 for r in rows if r['type']=='缺口')}）")
-    print(f"向量通道: {'可用（DASHSCOPE_API_KEY 已配置）' if vec_ok else 'N/A（未配置 key，融合自动 grep-only）'}")
+    if no_vector:
+        print("向量通道: 已按 --no-vector 关闭（合成语料不对应 PG 向量索引，走 grep 降级模式）")
+    else:
+        print(f"向量通道: {'可用（DASHSCOPE_API_KEY 已配置）' if vec_ok else 'N/A（未配置 key，融合自动 grep-only）'}")
     print("注：评测不经 /search 端点，不写 search_logs（避免污染知识缺口看板）")
     print()
 
+    # 语料为空时直接失败并给出可执行指引：否则只会看到"精确组 Recall=0.00"这种误导性结论
+    # （公开仓库的 vault 是空骨架——企业知识内容已脱敏移除，真实黄金集依赖本地内容）。
+    if active_pages == 0 and check:
+        print("FAIL: 语料为空（KB/NEXUS 下没有 status: active 页面），检索必然全部零命中。")
+        print("     真实黄金集（docs/VAL-03）依赖本地知识内容（不进公开仓库）；公开仓库/CI 请跑合成集门禁：")
+        print("     python tools/eval_search.py --check --no-vector "
+              "--kb tests/fixtures/retrieval_kb --gold tests/fixtures/retrieval_gold.md")
+        return 1
+
     scored = [r for r in rows if r["type"] in ("精确", "语义")]
     gaps = [r for r in rows if r["type"] == "缺口"]
-    results = {r["n"]: run_query(r["query"]) for r in rows}
+    results = {r["n"]: run_query(r["query"], allow_vector=allow_vector) for r in rows}
 
     # ---- 逐查询明细 ----
     if detail:
@@ -176,9 +224,11 @@ def main(detail: bool = False, check: bool = False) -> None:
               f"语义改写查询中向量通道命中 {sum(1 for r in sem_rows if results[r['n']]['vector'] and set(results[r['n']]['vector'][:K]) & set(r['expected']))}/{len(sem_rows)}"
               f"（grep 仅 {sum(1 for r in sem_rows if set(results[r['n']]['grep'][:K]) & set(r['expected']))}/{len(sem_rows)}）。")
     else:
-        print(f"在 {len(scored)} 条人工标注黄金查询上（向量通道未配置，融合=降级 grep-only）："
+        reason = ("合成语料按 --no-vector 关闭了向量通道" if no_vector
+                  else "向量通道不可用：未配置 DASHSCOPE_API_KEY 或 embedding 调用失败")
+        print(f"在 {len(scored)} 条标注查询上（{reason}，融合=降级 grep-only）："
               f"fused MRR@10={f_mrr:.2f}、Recall@10={f_rec:.2f}。"
-              f"配置 DASHSCOPE_API_KEY 后重跑获得向量与融合的独立数字。")
+              f"需要向量与融合的独立数字时，用真实 vault 跑不带 --no-vector 的完整评测。")
 
     # ---- 检索门禁（--check，CI 用）：断言失败 → 非零退出 ----
     if check:
@@ -203,15 +253,30 @@ def main(detail: bool = False, check: bool = False) -> None:
             print("FAIL:")
             for f in fails:
                 print(f" - {f}")
-            sys.exit(1)
+            return 1
         mode_txt = (f"完整（向量通道，fused MRR@10={f_mrr:.2f}、语义命中 {sem_fused}/{len(sem_rows)}）"
-                    if vec_ok else "grep 降级模式（未配置 key，向量侧由 tests/test_search_vector.py 的 mock 用例覆盖）")
+                    if vec_ok else "grep 降级模式（未指定 --no-vector 时向量侧由 tests/test_search_vector.py 的 mock 用例覆盖）")
         print(f"PASS: 缺口判据 {correct}/{len(gaps)}、精确组 Recall@10={exact_f_rec:.2f}、{mode_txt}")
+    return 0
+
+
+def _parse_args(argv: list[str]):
+    import argparse
+    parser = argparse.ArgumentParser(description="SP4 混合检索离线评测与门禁")
+    parser.add_argument("--kb", help="知识库根目录（默认 KB_ROOT env 或 vault/）")
+    parser.add_argument("--gold", help="黄金集 Markdown（默认 docs/VAL-03_检索评测_黄金集.md）")
+    parser.add_argument("--no-vector", action="store_true",
+                       help="关闭向量通道（合成语料专用：PG 里的向量索引只对应真实 vault）")
+    parser.add_argument("--detail", action="store_true", help="逐查询打印 fused 排序前 K")
+    parser.add_argument("--check", action="store_true", help="门禁模式：断言失败则非零退出")
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     import db
+    args = _parse_args(sys.argv[1:])
     try:
-        main(detail="--detail" in sys.argv, check="--check" in sys.argv)
+        sys.exit(main(detail=args.detail, check=args.check, kb=args.kb, gold=args.gold,
+                      no_vector=args.no_vector))
     finally:
         db.close_pool()  # 优雅退出，避免 psycopg 连接池后台线程悬挂（conftest 同款纪律）

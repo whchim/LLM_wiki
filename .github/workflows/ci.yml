@@ -3,14 +3,15 @@
 # 设计要点：
 # 1. 测试连真实 PostgreSQL（pgvector 镜像 service 容器），杜绝 SQLite 假绿——
 #    与 SP1"测试连真库"铁律一致；llmwiki_test 测试库由 CI 显式创建（conftest 只探测不建库）。
-# 2. 检索门禁 tools/eval_search.py --check：黄金集 14 条上断言缺口判据 100%、
-#    精确组 Recall 不回退；未配置 DASHSCOPE_API_KEY 时自动走 grep 降级模式
-#    （真实 DashScope API 不进 CI——外网依赖，向量侧逻辑由 tests/test_search_vector.py 的 mock 用例覆盖）。
+# 2. 检索门禁分两层（原先只有本地面，CI 拿不到真实黄金集就不跑——现补上 CI 可跑的一层）：
+#    - **本地完整评测**：真实黄金集（docs/VAL-03_检索评测_黄金集.md，基于真实业务内容的面试资产、
+#      不进公开仓库）→ `python tools/eval_search.py --check`（含向量/融合通道）。
+#    - **CI 合成门禁**（见下方 steps）：可公开的合成语料 tests/fixtures/retrieval_kb/ +
+#      tests/fixtures/retrieval_gold.md，`--no-vector` 走 grep 降级模式，断言缺口判据 100%、
+#      精确组 Recall 不回退、draft 页不参与检索——离线、零 API key、零外网
+#      （真实 DashScope API 不进 CI；向量/融合侧逻辑由 tests/test_search_vector.py 的 mock 覆盖，
+#      tests/test_eval_search_gate.py 另锁"门禁自身真的会拦"）。
 # 3. 无 JWT_SECRET 环境变量：测试文件各自 setdefault；api 包 import 零副作用（SP2 v0.1.1 修复）。
-
-# 2. 检索回归门禁 tools/eval_search.py --check：需要黄金集（docs/VAL-03_检索评测_黄金集.md，基于真实业务
-#    内容的评测集，现为本地面试资产、不进公开仓库）——故 CI 不执行该步骤；
-#    本地改检索逻辑后跑 `python tools/eval_search.py --check`（黄金集在本地存在）
 name: CI
 
 on:
@@ -64,3 +65,9 @@ jobs:
 
       - name: Prompt 退化检测（契约短语 + golden 样例回归，零 LLM/零 DB）
         run: python tools/prompt_regression.py
+
+      - name: 检索回归门禁（合成语料，grep 降级模式，零外网/零 API key）
+        run: |
+          python tools/eval_search.py --check --no-vector \
+            --kb tests/fixtures/retrieval_kb \
+            --gold tests/fixtures/retrieval_gold.md
