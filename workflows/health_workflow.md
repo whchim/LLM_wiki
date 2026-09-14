@@ -9,7 +9,7 @@
    python tools/health_check.py
    ```
    产出：health_reports 落库一行 + `NEXUS/研究/健康周报_<date>.md` +
-   相似候选 `vault/_triggers/.similarity_candidates_<date>.json`
+   相似候选 `${KB_ROOT:-vault}/_triggers/.similarity_candidates_<date>.json`
 
 2. **相似候选 LLM 复核**（仅当候选 JSON 非空）：
    对每对候选，读两篇概念全文，三选一判定：

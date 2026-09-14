@@ -117,17 +117,24 @@ def _update_index_stats(text: str, today: str | None = None) -> str:
     return text
 
 
-def _append_index(line: str) -> None:
+def append_index(section: str, line: str) -> None:
+    """把一行条目追加到 index.md 的指定节（幂等），并刷新头部统计行。
+
+    section：`资源` / `概念`（与 index.md 的二级标题一致）。"""
     idx = Path(KB_ROOT) / "NEXUS" / "index.md"
     if not idx.exists():
         return
     text = idx.read_text(encoding="utf-8")
     if line in text:  # 幂等
         return
-    # 追加到「## 概念」节末尾
-    if "## 概念" in text:
-        text = re.sub(r"(## 概念\n)", r"\1- " + line + "\n", text, count=1)
+    if f"## {section}" in text:
+        text = re.sub(rf"(## {section}\n)", r"\1- " + line + "\n", text, count=1)
     else:
-        text += f"\n## 概念\n- {line}\n"
+        text += f"\n## {section}\n- {line}\n"
     text = _update_index_stats(text)
     idx.write_text(text, encoding="utf-8")
+
+
+def _append_index(line: str) -> None:
+    """概念页审核通过后的索引追加（等价于 append_index("概念", line)）。"""
+    append_index("概念", line)

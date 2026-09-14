@@ -17,7 +17,7 @@
    - `processing` 且 started_at 距今 < 30 分钟 → 跳过（另一会话可能在跑）
    - 无记录 / `failed` / `pending` / `processing` 超时（僵尸） / `done` 但指纹已变 → 进入编译
 2. 对每个待编译路径：
-   a. 计算 SHA256：`python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "vault/<raw_path>"`
+   a. 计算 SHA256：`python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "${KB_ROOT:-vault}/<raw_path>"`
       （或 `sha256sum`；Windows 用 Python 方式）
    b. 置状态：`UPDATE compile_tasks SET status='processing', started_at=now() WHERE id=<该路径最新任务id>`
    c. 未命中缓存：
@@ -46,7 +46,7 @@
 
 - 统计：`compiled`（LLM 编译成功页数）、`cached`（指纹缓存命中数）、`failed`（失败数）、
   `files`（本批产出文件路径 JSON 数组）、`latency_ms`（本次编译会话耗时）
-- 方式：把上述计数与清单写入一个临时 JSON 文件 `vault/_triggers/.compile_trace_<ts>.json`，
+- 方式：把上述计数与清单写入一个临时 JSON 文件 `${KB_ROOT:-vault}/_triggers/.compile_trace_<ts>.json`，
   **/process-triggers 命令的兜底采集会读取/使用它**（若命令侧未自动执行，可手动调用：
 
   ```
@@ -64,5 +64,5 @@
 - 每个成功文件：NEXUS/资源/ 有 1 个资源摘要；概念页在 pending_review/，YAML 四必填字段齐全
 - **每个成功文件均通过 compile 契约校验**；落盘 frontmatter 可用
   `python tools/validate_llm_output.py frontmatter <file>` 复核（type/status/version/tags 命名空间）
-- 触发文件处理完毕移入 vault/_triggers/done/
+- 触发文件处理完毕移入 ${KB_ROOT:-vault}/_triggers/done/
 - 编译结果已采集（compile_session trace 落库）

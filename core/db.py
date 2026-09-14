@@ -557,6 +557,19 @@ def update_compile_task(task_id: int, status: str,
             conn.execute("UPDATE compile_tasks SET status=%s WHERE id=%s", (status, task_id))
 
 
+def latest_compile_task(raw_path: str) -> dict | None:
+    """某 RAW 路径的最新编译任务（断点续跑/指纹幂等的判据）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, raw_path, nexus_path, status, fingerprint, error_msg, started_at, completed_at "
+            "FROM compile_tasks WHERE raw_path=%s ORDER BY id DESC LIMIT 1", (raw_path,)).fetchone()
+    if row is None:
+        return None
+    keys = ("id", "raw_path", "nexus_path", "status", "fingerprint", "error_msg",
+            "started_at", "completed_at")
+    return dict(zip(keys, row))
+
+
 def list_recent_compile_tasks(limit: int = 50) -> list[dict]:
     """最近的编译任务（upload 页状态表）。"""
     with get_conn() as conn:

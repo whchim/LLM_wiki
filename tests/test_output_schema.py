@@ -161,6 +161,18 @@ def test_compile_invalid_source_type():
     assert any("source_type" in e for e in validate_compile_output(d))
 
 
+def test_compile_source_type_covers_real_corpus():
+    """回归（真实语料暴露）：政策/行业研究/网络文摘/论文/客户沟通 必须合法。
+
+    原先枚举只有 个人_notes/会议/经验/项目，接入真实企业语料时"国家政策"类文档被
+    契约反复拒绝（模型坚持输出"政策规划"，重试两次仍不通过）。
+    """
+    for value in ("政策", "行业研究", "网络文摘", "论文", "客户沟通"):
+        d = _valid_compile()
+        d["resource"]["source_type"] = value
+        assert validate_compile_output(d) == [], f"{value} 应为合法来源类型"
+
+
 def test_compile_concept_missing_sections():
     d = _valid_compile()
     d["concepts"][0]["content"] = "## 定义\n\n只有定义。"

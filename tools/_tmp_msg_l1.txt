@@ -1,0 +1,41 @@
+feat(compile): 编译引擎下沉进应用（L1），CLI 降级为可选驱动
+
+背景：知识层原先只有"应用外"的 Claude Code CLI 引擎（watcher → claude -p → 读 workflow 文档）。
+要上云做多租户时它有六个硬伤：不可容器化、watcher 串行无并发、没有租户上下文、
+acceptEdits 权限过宽、拿不到 per-tenant 计量与配额、**workflow 是自然语言文档写不了单测**
+（实测：端点不可达时整条链路空转 400 秒才发现）。而编译是"单文档 → 结构化产物"的
+确定性流水线，不需要 Agent 的自主性——所以把引擎下沉进应用，CLI 保留为可选驱动。
+
+新增（L1）：
+- core/compile_service.py：把 workflows/compile_workflow.md 代码化——指纹幂等（同内容跳过不烧
+  token）→ 门禁先于模型（blocked 不送模型）→ 调 ModelPort（prompts/compile_prompt.md）→
+  output_schema 契约校验（**违例清单回灌 prompt** 重试 1 次）→ 落盘（资源 active / 概念 pending）
+  + 双写 knowledge_entries + 刷新 index.md 资源节 → compile_session trace（detail 带 engine）
+- tools/compile_worker.py：COMPILE_ENGINE=api（默认，应用内，容器可跑）| claude_cli（写触发纸条
+  交 watcher），两种驱动共用同一契约、产出与落库一致
+- _write_markdown 写前校验 frontmatter，不合契约直接 failed **不落盘**（门禁进 loop）
+
+真实语料暴露并修掉两个契约问题（都补了回归测试）：
+- 自由标签违反落盘契约：编译 prompt 对 tags 是软约束，而落盘 frontmatter 的 tags 必须落在
+  SCHEMA.md 命名空间内（实测模型输出"政策规划""新质生产力"）→ _namespaced_tags 确定性清洗
+- source_type 枚举覆盖不了真实语料：原 4 类（个人_notes/会议/经验/项目），政策类文档连续两轮
+  被判非法（模型坚持输出"政策规划"，回灌重试仍不过）→ 扩到 9 类（补 政策/行业研究/网络文摘/
+  论文/客户沟通），同步 prompts/compile_prompt.md 判定表与 docs/WIKI-00 §5.1 来源分类映射
+
+顺带修复与打通：
+- KB_ROOT 端到端：workflows/*.md 与 .claude/commands/*.md 里 vault/ → ${KB_ROOT:-vault}/
+  （不设时行为不变），于是真实语料与产物可以放**仓库外**，公开仓库继续只留空骨架
+- .gitignore 兜底：vault/RAW|NEXUS|pending_review|_triggers|_suggestions 一律不入库
+- 修两处过时引用：review_workflow.md 的 streamlit_app/ → core/（Streamlit 早已退役）
+- core/ops.py 抽出公共 append_index(section, line)；core/db.py 新增 latest_compile_task()
+
+真机验收（容器内，无 Claude Code、无宿主机代理，走 DashScope 真模型）：
+- 真实企业语料 3 篇编译成功；其中一篇第 1 次违例（source_type 非法）→ 回灌后第 2 次通过
+- 政策类文档补枚举后 source_type=政策 编译成功（5 个概念页）
+- 产出 13 篇条目全部通过 validate_entry_frontmatter（0 契约违例）
+- knowledge_entries 资源 active / 概念 pending 与文件状态一致；compile_tasks 全 done；
+  compile_session trace 带 engine=api；token 与延迟均已记录
+
+文档：新增 docs/WIKI-70_Phase2_应用内编译引擎_设计文档.md（问题清单、双引擎架构、
+多租户路线图 L2 队列租约 / L3 RLS 隔离 / L4 模型配置与用量进库）；WIKI-00 §5.1 来源分类修订；
+CLAUDE.md 文档表/架构/关键机制同步。pytest 353 通过。

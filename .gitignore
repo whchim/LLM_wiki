@@ -43,3 +43,14 @@ frontend/dist/
 
 # 本地数据备份（含历史业务内容，绝不进仓库）
 .local-backup/
+
+# 本地 compose 覆盖（真实语料的挂载路径；绝不进仓库）
+docker-compose.override.yml
+
+# 知识内容防误传兜底：vault 里只保留可重建的骨架（SCHEMA.md），
+# 真实业务语料与编译产物一律不进公开仓库
+vault/RAW/
+vault/NEXUS/
+vault/pending_review/
+vault/_triggers/
+vault/_suggestions/

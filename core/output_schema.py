@@ -14,7 +14,11 @@ import re
 
 # ---- 枚举常量（与 prompts/SCHEMA.md 对齐）----
 DEPARTMENTS = {"销售", "售前", "产品", "实施交付", "开发", "财务", "人事", "行政", "共享层"}
-SOURCE_TYPES = {"个人_notes", "会议", "经验", "项目"}
+# 来源类型：原先只有 个人_notes/会议/经验/项目（Demo 期口径）；接入真实企业语料后补齐
+# 政策/行业研究/网络文摘/论文/客户沟通——否则"国家政策、市场答疑、论文"这类文档会被契约
+# 反复拒绝（实测：政策类文档模型坚持输出"政策规划"，两次重试都不通过）。
+SOURCE_TYPES = {"个人_notes", "会议", "经验", "项目",
+                "政策", "行业研究", "网络文摘", "论文", "客户沟通"}
 ENTRY_TYPES = {"concept", "resource", "research", "glossary"}
 ENTRY_STATUSES = {"draft", "pending", "active", "stale", "deprecated"}
 # SCHEMA.md 三个标签命名空间（部门 9 + 领域 12 + 类型 8）
