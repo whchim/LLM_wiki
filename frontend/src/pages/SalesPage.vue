@@ -1,9 +1,38 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Refresh, Upload } from '@element-plus/icons-vue'
-import { api, ApiError, SESSION_STATUS_LABELS } from '../api'
+import { Document, Loading, Refresh, Upload } from '@element-plus/icons-vue'
+import { api, ApiError, SESSION_STATUS_LABELS, STATE_LABELS } from '../api'
+const props = defineProps({
+  isReviewer: { type: Boolean, default: false },
+  isAdmin: { type: Boolean, default: false },
+})
 const loading = ref(false)
+const showArchived = ref(false)
+
+// ---- Agent 进行中反馈 ----
+// 澄清 Agent 单次调用通常 10-40 秒（服务端 60 秒超时），必须让用户看到"在跑"而不是"卡死"。
+// agentBusy 同时充当防重复点击的第一道闸（后端另有"未答问题不推进"+乐观锁兜底）。
+const agentBusy = ref('')
+const elapsed = ref(0)
+let busyTimer = null
+
+function stopTimer() {
+  if (busyTimer) { clearInterval(busyTimer); busyTimer = null }
+}
+function startBusy(label) {
+  agentBusy.value = label
+  elapsed.value = 0
+  stopTimer()
+  busyTimer = setInterval(() => { elapsed.value += 1 }, 1000)
+}
+function stopBusy() {
+  stopTimer()
+  agentBusy.value = ''
+  elapsed.value = 0
+}
+onUnmounted(stopTimer)
+
 const sessions = ref([])
 const selected = ref(null)
 const drafts = ref({})
@@ -116,7 +145,7 @@ function guessCustomerId(filename) {
 async function load() {
   loading.value = true
   try {
-    sessions.value = await api.mine()
+    sessions.value = await api.mine(showArchived.value)
     if (selected.value) {
       const still = sessions.value.find((s) => s.session_id === selected.value.session_id)
       if (still) selected.value = await api.session(selected.value.session_id)
@@ -130,12 +159,83 @@ async function load() {
 }
 
 async function openSession(row) {
+  if (agentBusy.value) return   // 进行中不重复触发（防重复推进）
+  if (row.deleted_at) {
+    ElMessage.info('该会话已归档（仅管理员可查看），如需打开请先点「恢复」')
+    return
+  }
+  startBusy('澄清 Agent 正在分析这条纪要，生成追问…')
   try {
     // advance=true：会话为 open 时让后端跑一轮 agent，首次打开即可看到追问
     selected.value = await api.session(row.session_id, true)
     await load()
   } catch (err) {
     ElMessage.error(err instanceof ApiError ? err.message : '加载会话详情失败')
+  } finally {
+    stopBusy()
+  }
+}
+
+/** 转人工后是否还能重开：还有 Agent 运行预算就允许（max_rounds 轮追问 + 1 次收尾判定） */
+const canReopen = computed(() => {
+  const s = selected.value
+  return !!s && (s.round_count || 0) <= (s.max_rounds || 2)
+})
+
+async function doResolve(payload) {
+  try {
+    const res = await api.resolveSession(selected.value.session_id, payload)
+    selected.value = { ...selected.value, ...res.session }
+    ElMessage.success(payload.decision === 'closed' ? '会话已关闭' : '会话已重开，可继续推进')
+    await load()
+  } catch (err) {
+    ElMessage.error(err instanceof ApiError ? err.message : '处置失败')
+  }
+}
+
+/** 补充事实后继续：可选补一句脱敏事实；留空即仅重开重试（瞬时故障场景） */
+async function reopenSession() {
+  const res = await ElMessageBox.prompt(
+    '可补充一句已脱敏的事实（留空＝仅重试一轮）', '补充事实后继续',
+    { confirmButtonText: '重开并继续', cancelButtonText: '取消', inputPlaceholder: '例如：客户已确认下周二演示' },
+  ).catch(() => ({ value: null }))
+  if (res.value === null) return
+  await doResolve({ decision: 'reopened', answer_text_redacted: res.value || null })
+}
+
+/** 关闭会话：原因必填，落库并进审计——关闭无原因等于没闭环 */
+async function closeSession() {
+  const res = await ElMessageBox.prompt(
+    '关闭原因（必填，记入会话与审计）', '关闭澄清会话',
+    {
+      confirmButtonText: '关闭会话', cancelButtonText: '取消',
+      inputValidator: (v) => ((v || '').trim() ? true : '请填写关闭原因'),
+    },
+  ).catch(() => ({ value: null }))
+  if (res.value === null) return
+  await doResolve({ decision: 'closed', reason: res.value })
+}
+
+/** 事实已足够（ready_for_proposal）→ 生成待确认状态建议，交负责人在「客户状态」确认 */
+async function generateProposal() {
+  if (agentBusy.value) return
+  startBusy('正在根据已确认事实生成状态建议…')
+  try {
+    const res = await api.generateProposal(selected.value.session_id)
+    if (!res.generated) {
+      ElMessage.warning(`未能生成建议：${res.reason || '证据不足'}`)
+    } else if (res.reused) {
+      const state = res.proposal?.proposed_state || ''
+      ElMessage.info(`该洽谈已有待确认建议（${state}），未重复创建`)
+    } else {
+      ElMessage.success(`已生成待确认建议：${res.proposed_state} —— 请负责人在「客户状态」确认`)
+    }
+    selected.value = await api.session(selected.value.session_id)
+    await load()
+  } catch (err) {
+    ElMessage.error(err instanceof ApiError ? err.message : '生成状态建议失败')
+  } finally {
+    stopBusy()
   }
 }
 
@@ -184,6 +284,7 @@ async function submit() {
   }
   if (!form.value.idempotency_key.trim()) form.value.idempotency_key = `ui-${uid()}`
   loading.value = true
+  startBusy('正在提交纪要并创建澄清会话…')
   try {
     await api.intake({ ...form.value, occurred_at: new Date(form.value.occurred_at).toISOString() })
     ElMessage.success('纪要已通过门禁并创建澄清会话')
@@ -195,12 +296,14 @@ async function submit() {
     ElMessage.error(err instanceof ApiError ? err.message : '提交失败')
   } finally {
     loading.value = false
+    stopBusy()
   }
 }
 
 async function sendAnswer(turn, question) {
   const value = (drafts.value[question.id] || '').trim()
-  if (!value) return
+  if (!value || agentBusy.value) return
+  startBusy('正在根据你的回答生成下一轮判断…')
   try {
     const res = await api.answer(selected.value.session_id, {
       turn_id: turn.turn_id, question_id: question.id, answer_text_redacted: value,
@@ -215,6 +318,45 @@ async function sendAnswer(turn, question) {
     await load()
   } catch (err) {
     ElMessage.error(err instanceof ApiError ? err.message : '保存回答失败')
+  } finally {
+    stopBusy()
+  }
+}
+
+/** 归档（软删除）会话——**仅管理员**；客户状态事件不受影响（事实不可删，只能追加更正） */
+async function archiveSession() {
+  if (!selected.value || agentBusy.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定归档「${selected.value.customer_id}」的这条澄清会话？\n\n`
+      + '归档后：该会话与其状态建议不再出现在列表里；客户已确认的阶段与状态事件**不受影响**（事实记录只追加、不删除）。可由管理员随时恢复。',
+      '归档会话记录', { type: 'warning', confirmButtonText: '确认归档', cancelButtonText: '取消' })
+  } catch (err) {
+    return
+  }
+  startBusy('正在归档会话…')
+  try {
+    const res = await api.deleteSession(selected.value.session_id)
+    ElMessage.success(res.already_deleted
+      ? '该会话此前已归档'
+      : `已归档（同时归档状态建议 ${res.proposals_archived} 条）`)
+    selected.value = null
+    await load()
+  } catch (err) {
+    ElMessage.error(err instanceof ApiError ? err.message : '归档失败')
+  } finally {
+    stopBusy()
+  }
+}
+
+/** 恢复已归档会话——仅管理员 */
+async function restoreArchived(row) {
+  try {
+    const res = await api.restoreSession(row.session_id)
+    ElMessage.success(res.restored ? '已恢复该会话' : '该会话未被归档')
+    await load()
+  } catch (err) {
+    ElMessage.error(err instanceof ApiError ? err.message : '恢复失败')
   }
 }
 
@@ -222,6 +364,69 @@ const statusTag = (s) => ({
   open: 'warning', needs_human_review: 'danger', ready_for_proposal: 'success',
   completed: 'info', cancelled: 'info',
 }[s] || 'info')
+
+/** 轮次展示：round_count 含"收尾判定"那一轮，不能直接当追问轮数显示（否则出现 3/2 这种怪值） */
+function roundLabel(s) {
+  if (!s) return ''
+  const max = s.max_rounds || 2
+  const asked = Math.min(s.round_count || 0, max)
+  const concluded = (s.round_count || 0) > max
+  return `${asked}/${max} 轮追问${concluded ? ' · 收尾已完成' : ''}`
+}
+
+const confidence = (row) => Math.round(Number(row?.confidence || 0) * 100)
+const stateName = (s) => STATE_LABELS[s] || s || '未确认'
+
+/** 会话状态中文：cancelled 需结合处置信息区分"人工处置后关闭"与"作废"，不能一律叫"已取消" */
+function sessionStatusLabel(s) {
+  if (!s) return ''
+  if (s.status === 'cancelled') return s.resolution_note ? '人工已关闭' : '已取消'
+  return SESSION_STATUS_LABELS[s.status] || s.status
+}
+
+/** 最新一轮里尚未回答的问题（与后端判据同构：回答按轮作用域比对） */
+function pendingQuestions(s) {
+  const turns = s?.turns || []
+  if (!turns.length) return []
+  const latest = turns[turns.length - 1]
+  if (latest.status !== 'needs_clarification') return []
+  const answered = new Set((s.answers || [])
+    .filter((a) => a.turn_id === latest.turn_id)
+    .map((a) => a.question_id))
+  return (latest.agent_output?.questions || []).filter((q) => !answered.has(q.id))
+}
+
+/** "下一步该做什么"：避免用户只看到"没有按钮"却不知道原因（button 只在条件满足时出现） */
+const nextStep = computed(() => {
+  const s = selected.value
+  if (!s) return null
+  const pending = pendingQuestions(s)
+  // 已生成建议：交给负责人了，明确告知"球在谁手上"，避免看起来毫无变化
+  if (s.pending_proposal) {
+    const p = s.pending_proposal
+    const tail = p.decision === 'needs_review' ? '（需人工判断）' : ''
+    return { type: 'success',
+             text: `已交负责人：待确认建议「${stateName(p.proposed_state)}」${tail}，等待负责人在「客户状态」确认` }
+  }
+  if (s.status === 'open' && pending.length) {
+    return { type: 'warning',
+             text: `下一步：请先回答第 ${s.round_count} 轮的 ${pending.length} 个追问，答完会自动进入判断` }
+  }
+  if (s.status === 'open') {
+    return { type: 'info', text: '本轮问题已答完：点「刷新」或重新打开会话即可让 Agent 继续判断' }
+  }
+  if (s.status === 'ready_for_proposal') {
+    return { type: 'success', text: '事实已足够：点下方「生成状态建议」，交负责人在「客户状态」确认' }
+  }
+  if (s.status === 'needs_human_review') {
+    return { type: 'warning',
+             text: '已转人工：点「生成建议交负责人」把案例交给负责人判断；或由审核者补充事实后重开' }
+  }
+  if (s.status === 'cancelled') {
+    return { type: 'info', text: `会话已由人工关闭：${s.resolution_note || '—'}（${s.resolved_by || '—'}）` }
+  }
+  return null
+})
 
 /** 一轮里的追问（结构：turn.agent_output.questions） */
 const questionsOf = (turn) => (turn?.agent_output?.questions) || []
@@ -384,21 +589,33 @@ onMounted(() => { load(); loadAliases() })
             <div class="card-head">
               <strong>我的澄清会话</strong>
               <el-tag v-if="openCount" type="warning" size="small">待澄清 {{ openCount }}</el-tag>
+              <el-checkbox v-if="props.isAdmin" v-model="showArchived" size="small"
+                           class="archived-toggle" @change="load">显示已归档</el-checkbox>
             </div>
           </template>
 
           <el-empty v-if="!loading && !sessions.length" description="还没有会话" :image-size="80" />
 
-          <el-table v-else :data="sessions" highlight-current-row size="small" @row-click="openSession">
+          <el-table v-else v-loading="loading" :data="sessions" highlight-current-row size="small" @row-click="openSession">
             <el-table-column prop="customer_id" label="客户" min-width="140" />
-            <el-table-column label="状态" width="110">
+            <el-table-column label="状态" width="120">
               <template #default="{ row }">
-                <el-tag :type="statusTag(row.status)" size="small">
-                  {{ SESSION_STATUS_LABELS[row.status] || row.status }}
+                <el-tag v-if="row.deleted_at" type="info" size="small">已归档</el-tag>
+                <el-tag v-else :type="statusTag(row.status)" size="small">
+                  {{ sessionStatusLabel(row) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="round_count" label="轮次" width="70" />
+            <el-table-column v-if="showArchived && props.isAdmin" label="操作" width="90">
+              <template #default="{ row }">
+                <el-button v-if="row.deleted_at" size="small" text type="primary"
+                           @click.stop="restoreArchived(row)">恢复</el-button>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="轮次" width="150">
+              <template #default="{ row }">{{ roundLabel(row) }}</template>
+            </el-table-column>
             <el-table-column prop="session_id" label="会话 ID" min-width="180" show-overflow-tooltip />
           </el-table>
         </el-card>
@@ -408,11 +625,26 @@ onMounted(() => { load(); loadAliases() })
             <div class="card-head">
               <strong>{{ selected.customer_id }}</strong>
               <el-tag :type="statusTag(selected.status)" size="small">
-                {{ SESSION_STATUS_LABELS[selected.status] || selected.status }}
+                {{ sessionStatusLabel(selected) }}
               </el-tag>
+              <span class="muted">{{ roundLabel(selected) }}</span>
               <span class="muted">{{ selected.session_id }}</span>
+              <div class="spacer" />
+              <el-button v-if="props.isAdmin" size="small" type="danger" text
+                         :disabled="!!agentBusy" @click="archiveSession">归档记录</el-button>
             </div>
           </template>
+
+          <!-- 下一步提示：按钮只在条件满足时出现，这里明确告诉用户当前缺什么 -->
+          <el-alert v-if="nextStep" :type="nextStep.type" show-icon :closable="false"
+                    :title="nextStep.text" class="next-step" />
+
+          <!-- Agent 进行中：明确告知"在跑"并显示已等待秒数，避免被误认为卡死 -->
+          <div v-if="agentBusy" class="agent-busy">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>{{ agentBusy }}</span>
+            <span class="muted">已等待 {{ elapsed }} 秒 · 通常 10-40 秒；服务端 60 秒超时会明确报错</span>
+          </div>
 
           <div v-for="turn in selected.turns || []" :key="turn.turn_id" class="turn">
             <div class="turn-head">
@@ -430,11 +662,50 @@ onMounted(() => { load(); loadAliases() })
               </p>
               <div v-if="answerOf(q.id)" class="answered">已答：{{ answerOf(q.id) }}</div>
               <div v-else class="answer-row">
-                <el-input v-model="drafts[q.id]" size="small" placeholder="用一句话补充事实（已脱敏）" />
-                <el-button size="small" type="primary" @click="sendAnswer(turn, q)">提交回答</el-button>
+                <el-input v-model="drafts[q.id]" size="small" placeholder="用一句话补充事实（已脱敏）"
+                          :disabled="!!agentBusy" />
+                <el-button size="small" type="primary" :disabled="!!agentBusy"
+                           @click="sendAnswer(turn, q)">提交回答</el-button>
               </div>
             </div>
             <p v-if="!questionsOf(turn).length" class="muted turn-note">{{ turnNote(turn) }}</p>
+          </div>
+
+          <!-- 事实已足够：生成待确认状态建议（最后一公里），交负责人在「客户状态」确认 -->
+          <div v-if="selected.status === 'ready_for_proposal' && !selected.pending_proposal" class="resolve-row">
+            <el-alert type="success" show-icon :closable="false"
+                      title="澄清已完成：可生成待确认状态建议（建议不会自动改客户事实，需负责人在「客户状态」确认）" />
+            <div class="resolve-actions">
+              <el-button type="primary" :disabled="!!agentBusy" @click="generateProposal">生成状态建议</el-button>
+            </div>
+          </div>
+
+          <!-- 人工处置闭环：转人工后必须给负责人一个可判断的对象，否则"转人工"是死胡同 -->
+          <div v-if="selected.status === 'needs_human_review'" class="resolve-row">
+            <el-alert type="warning" show-icon :closable="false"
+                      title="本会话已转人工：可生成待确认建议交负责人判断，或由审核者补充事实后重开，或关闭本次澄清记录" />
+            <el-alert v-if="selected.pending_proposal" type="success" show-icon :closable="false"
+                      :title="`已交负责人：建议「${stateName(selected.pending_proposal.proposed_state)}」待确认（去「客户状态」查看）`" />
+            <div class="resolve-actions">
+              <el-button v-if="!selected.pending_proposal" type="success" :disabled="!!agentBusy"
+                         @click="generateProposal">生成建议交负责人</el-button>
+              <el-button type="primary" plain :disabled="!props.isReviewer || !canReopen || !!agentBusy"
+                         @click="reopenSession">补充事实后继续</el-button>
+              <el-button type="danger" plain :disabled="!props.isReviewer || !!agentBusy"
+                         @click="closeSession">关闭会话</el-button>
+            </div>
+            <p v-if="!canReopen" class="muted resolve-hint">
+              追问与自动判定额度已用尽（{{ selected.max_rounds }}/{{ selected.max_rounds }} 轮）：
+              点「生成建议交负责人」把案例交给负责人判断，或「关闭会话」结束本次澄清记录（关闭不会产生给负责人的对象）。
+            </p>
+            <p v-else-if="!props.isReviewer" class="muted resolve-hint">
+              补充事实、关闭会话需审核者/管理员；「生成建议交负责人」你自己即可操作。
+            </p>
+            <p v-else class="muted resolve-hint">重开后可补答待答问题；答完自动执行收尾判定。</p>
+          </div>
+          <div v-else-if="selected.status === 'cancelled' && selected.resolution_note" class="resolve-row">
+            <el-alert type="info" show-icon :closable="false"
+                      :title="`已关闭：${selected.resolution_note}（${selected.resolved_by || '—'}）`" />
           </div>
 
           <el-empty v-if="!(selected.turns || []).length" description="尚无澄清轮次" :image-size="70">
@@ -481,6 +752,8 @@ onMounted(() => { load(); loadAliases() })
 .hidden-file { display: none; }
 .file-chip { display: inline-flex; align-items: center; gap: 6px; }
 .card-head { display: flex; align-items: center; gap: 10px; }
+.spacer { flex: 1; }
+.archived-toggle { margin-left: auto; }
 .card-head .muted { margin-left: auto; }
 .session-card { margin-bottom: 18px; }
 .turn { margin-bottom: 18px; }
@@ -493,5 +766,16 @@ onMounted(() => { load(); loadAliases() })
 .answered { font-size: 12px; color: var(--el-color-success); }
 .answer-row { display: flex; gap: 8px; }
 .muted { color: var(--c-text-muted); font-size: 12px; }
+.resolve-row { margin-top: 14px; }
+.resolve-hint { margin: 8px 0 0; }
+.next-step { margin-bottom: 12px; }
+.resolve-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.agent-busy {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 12px; font-size: 13px;
+  border: 1px solid var(--el-color-primary-light-7);
+  background: var(--el-color-primary-light-9);
+  border-radius: 8px;
+}
 :deep(.el-table__row) { cursor: pointer; }
 </style>

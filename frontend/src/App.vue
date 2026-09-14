@@ -170,7 +170,7 @@ defineExpose({ notifyError })
         <ReviewPage v-else-if="view === 'review'" :is-reviewer="isReviewer" />
         <GrowthPage v-else-if="view === 'growth'" />
         <ObservabilityPage v-else-if="view === 'observability'" />
-        <SalesPage v-else-if="view === 'sales'" />
+        <SalesPage v-else-if="view === 'sales'" :is-reviewer="isReviewer" :is-admin="isAdmin" />
         <CustomerStatePage v-else-if="view === 'customer'" :is-reviewer="isReviewer" />
       </el-main>
     </el-container>

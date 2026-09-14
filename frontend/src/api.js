@@ -76,15 +76,24 @@ export const api = {
 
   // ---- 销售域：事实澄清 ----
   intake: (body) => request('/clarifications/intake', { method: 'POST', body: JSON.stringify(body) }),
-  mine: () => request('/clarifications/mine'),
+  mine: (includeDeleted = false) => request(`/clarifications/mine${includeDeleted ? '?include_deleted=true' : ''}`),
   sessions: () => request('/clarifications/sessions'),
   // advance=true：会话为 open 时先推进一轮（调模型）再返回，工作台无需额外调用
   session: (id, advance = false) => request(`/clarifications/sessions/${id}${advance ? '?advance=true' : ''}`),
   advanceSession: (id) => request(`/clarifications/sessions/${id}/advance`, { method: 'POST' }),
   answer: (id, body) => request(`/clarifications/sessions/${id}/answers`, { method: 'POST', body: JSON.stringify(body) }),
+  // 人工处置转人工会话：closed（关闭，带原因）/ reopened（补充事实后重开继续）
+  resolveSession: (id, body) => request(`/clarifications/sessions/${id}/resolve`, { method: 'POST', body: JSON.stringify(body) }),
+  // 把澄清结论转成待确认状态建议（确定性规则；建议不修改客户状态）
+  generateProposal: (id) => request(`/clarifications/sessions/${id}/proposal`, { method: 'POST' }),
+  // 归档（软删除）澄清会话与建议——仅管理员；恢复同样仅管理员
+  deleteSession: (id) => request(`/clarifications/sessions/${id}`, { method: 'DELETE' }),
+  restoreSession: (id) => request(`/clarifications/sessions/${id}/restore`, { method: 'POST' }),
 
   // ---- 销售域：客户状态 ----
   proposals: () => request('/customer-states/proposals/pending'),
+  // 客户当前阶段总览（确认后的结果在这里可见）
+  customers: () => request('/customer-states/customers'),
   decide: (id, body) => request(`/customer-states/proposals/${id}/decision`, { method: 'POST', body: JSON.stringify(body) }),
   events: (customerId) => request(`/customer-states/${encodeURIComponent(customerId)}/events`),
 }
