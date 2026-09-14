@@ -86,8 +86,14 @@ def build_user_prompt(
     prior_claims: list[Mapping[str, Any]] | None = None,
     answer_contents: Mapping[str, str] | None = None,
     allowed_sources: list[str] | None = None,
+    conclusion_only: bool = False,
 ) -> str:
-    """构造最小脱敏上下文；不接受精确敏感数值或原始客户身份。"""
+    """构造最小脱敏上下文；不接受精确敏感数值或原始客户身份。
+
+    conclusion_only=True 表示本次是**收尾判定轮**（追问预算已用尽）：要求模型只给结论，
+    不得再提出追问——服务端另有确定性兜底（clarification_service 会把追问强制改写为
+    insufficient_evidence），不依赖模型自律。
+    """
     if not isinstance(content_redacted, str) or not content_redacted.strip():
         raise ValueError("content_redacted 不能为空")
     if len(content_redacted) > DEFAULT_MAX_INPUT_CHARS:
@@ -97,6 +103,11 @@ def build_user_prompt(
     claims_json = json.dumps(prior_claims or [], ensure_ascii=False, separators=(",", ":"))
     answers_json = json.dumps(answer_contents or {}, ensure_ascii=False, separators=(",", ":"))
     sources = allowed_sources or ["initial_note", *(answer_contents or {})]
+    final_note = (
+        "\n【收尾判定轮】追问次数已用尽：questions 必须为空数组；"
+        "证据足以支撑状态建议时 stop_reason=ready_for_proposal，否则 stop_reason=insufficient_evidence。"
+        if conclusion_only else ""
+    )
     return (
         f"customer_id={customer_id.strip()}\n"
         f"current_state={current_state or 'none'}\n"
@@ -106,6 +117,7 @@ def build_user_prompt(
         f"allowed_evidence_sources={json.dumps(sources, ensure_ascii=False)}\n"
         "请严格按 system prompt 输出 JSON，不要输出 Markdown。"
         "证据的 source 只能取 allowed_evidence_sources 中的值。"
+        f"{final_note}"
     )
 
 
@@ -169,6 +181,7 @@ def run_clarification_agent(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_retries: int = DEFAULT_MAX_RETRIES,
     on_attempt: Callable[[RuntimeAttempt], None] | None = None,
+    conclusion_only: bool = False,
 ) -> ClarificationRun:
     """调用模型并校验输出，失败后最多重试一次，永不写状态。"""
     if max_tokens < 1 or max_tokens > DEFAULT_MAX_TOKENS:
@@ -182,6 +195,7 @@ def run_clarification_agent(
         prior_claims=prior_claims,
         answer_contents=answer_contents,
         allowed_sources=allowed_sources,
+        conclusion_only=conclusion_only,
     )
     result = ClarificationRun(status="failed", output=None, errors=[])
     for attempt_number in range(1, max_retries + 2):

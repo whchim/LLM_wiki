@@ -113,6 +113,18 @@ class ClarificationAnswerRequest(BaseModel):
     answer_text_redacted: str
 
 
+class ClarificationResolveRequest(BaseModel):
+    """人工处置澄清会话（reviewer/admin）。
+
+    decision=closed → 关闭会话（reason 必填）；
+    decision=reopened → 补充事实后重开继续（仅当轮次预算未用尽；answer_text 可选）。
+    """
+    decision: str
+    reason: str | None = None
+    answer_text_redacted: str | None = None
+    question_id: str | None = None
+
+
 class CustomerAliasRequest(BaseModel):
     """建立"内部中文简称 → 脱敏代号"的绑定；别名由服务端做敏感信息检查。"""
     alias: str

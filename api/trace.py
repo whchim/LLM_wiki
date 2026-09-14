@@ -26,6 +26,8 @@ SPAN_TYPES = {
     "customer_state_decision", "customer_state_withdraw",
     "customer_state_correction", "customer_state_expire",
     "clarification_session_create", "clarification_answer", "sales_intake",
+    "clarification_resolve", "clarification_proposal",
+    "clarification_session_delete", "clarification_session_restore",
 }
 
 

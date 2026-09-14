@@ -68,7 +68,10 @@ Agent 不得在本契约中写入客户当前状态，也不得直接调用确�
 
 `ClarificationQuestion` 必须引用一个 `missing_fact_id`，并声明回答类型。追问规则：
 
-1. 每轮最多 2 个问题，最多 2 轮；
+1. 每轮最多 2 个问题，最多 2 轮（**轮次 = 追问轮数**）。追问预算用尽后仍允许一次
+   **收尾判定轮**：该轮 `questions` 必须为空，只能给 `ready_for_proposal` /
+   `insufficient_evidence` 结论；服务端会把该轮的追问强制改写为 `insufficient_evidence`（`conclusion_coerced` 可观测）。
+   **最后一轮追问生成后会话保持 open**，保证这一轮的问题能被回答。
 2. 只问会改变状态判断或负责人决策的问题；
 3. 不重复询问已有证据；
 4. 不索取身份证、手机号、密钥、精确金额、具体报价等非必要敏感信息；

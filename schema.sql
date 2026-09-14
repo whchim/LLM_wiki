@@ -182,6 +182,17 @@ CREATE TABLE IF NOT EXISTS clarification_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_clarification_sessions_status ON clarification_sessions(status, updated_at DESC);
 
+-- 人工处置（闭环）：reviewer/admin 可"补充事实后重开"或"关闭会话"，
+-- 处置原因与处置人必须落库（关闭无原因等于没闭环）。
+ALTER TABLE clarification_sessions ADD COLUMN IF NOT EXISTS resolution_note TEXT;
+ALTER TABLE clarification_sessions ADD COLUMN IF NOT EXISTS resolved_by TEXT;
+ALTER TABLE clarification_sessions ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+
+-- 软删除（归档）：仅管理员可删澄清会话与其产生的状态建议；
+-- **不删状态事件**——客户事实只能追加更正/撤回/过期（SA-02），不可删除。
+ALTER TABLE clarification_sessions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE clarification_sessions ADD COLUMN IF NOT EXISTS deleted_by TEXT;
+
 CREATE TABLE IF NOT EXISTS clarification_turns (
     turn_id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES clarification_sessions(session_id),
@@ -230,6 +241,10 @@ CREATE TABLE IF NOT EXISTS state_proposals (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_proposals_status ON state_proposals(status, created_at DESC);
+
+-- 状态建议的软删除（归档）：会话归档时一并归档其建议（仅管理员，可恢复）
+ALTER TABLE state_proposals ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE state_proposals ADD COLUMN IF NOT EXISTS deleted_by TEXT;
 
 CREATE TABLE IF NOT EXISTS state_decisions (
     decision_id TEXT PRIMARY KEY,

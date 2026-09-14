@@ -186,18 +186,105 @@ def can_access_clarification_session(session_id: str, username: str) -> bool:
             (session_id, username)).fetchone() is not None
 
 
+def soft_delete_clarification_session(session_id: str, deleted_by: str) -> dict:
+    """软删除（归档）澄清会话：标记会话与其产生的状态建议。
+
+    - **不删状态事件/决策**：客户事实只能追加更正/撤回/过期（SA-02），归档不动事实链；
+    - 幂等：已归档的会话重复删除返回 `already_deleted=True`；
+    - 追问/回答不单独标记——它们只通过会话读取，会话归档即不可见。
+
+    权限由调用方（API 层）限定为管理员。
+    """
+    if not (session_id or "").strip() or not (deleted_by or "").strip():
+        raise ValueError("session_id / deleted_by 不能为空")
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT conversation_id, deleted_at FROM clarification_sessions WHERE session_id=%s FOR UPDATE",
+            (session_id,)).fetchone()
+        if row is None:
+            raise KeyError("澄清会话不存在")
+        conversation_id, deleted_at = row
+        if deleted_at is not None:
+            return {"session_id": session_id, "conversation_id": conversation_id,
+                    "already_deleted": True, "proposals_archived": 0}
+        conn.execute("UPDATE clarification_sessions SET deleted_at=now(), deleted_by=%s WHERE session_id=%s",
+                     (deleted_by, session_id))
+        archived = conn.execute(
+            "UPDATE state_proposals SET deleted_at=now(), deleted_by=%s "
+            "WHERE conversation_id=%s AND deleted_at IS NULL",
+            (deleted_by, conversation_id)).rowcount
+    return {"session_id": session_id, "conversation_id": conversation_id,
+            "already_deleted": False, "proposals_archived": archived}
+
+
+def restore_clarification_session(session_id: str) -> dict:
+    """恢复已归档的会话与其状态建议（归档可逆，数据一直在库里）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT conversation_id, deleted_at FROM clarification_sessions WHERE session_id=%s FOR UPDATE",
+            (session_id,)).fetchone()
+        if row is None:
+            raise KeyError("澄清会话不存在")
+        conversation_id, deleted_at = row
+        if deleted_at is None:
+            return {"session_id": session_id, "restored": False, "reason": "该会话未被归档"}
+        conn.execute("UPDATE clarification_sessions SET deleted_at=NULL, deleted_by=NULL WHERE session_id=%s",
+                     (session_id,))
+        revived = conn.execute(
+            "UPDATE state_proposals SET deleted_at=NULL, deleted_by=NULL "
+            "WHERE conversation_id=%s AND deleted_at IS NOT NULL", (conversation_id,)).rowcount
+    return {"session_id": session_id, "conversation_id": conversation_id,
+            "restored": True, "proposals_restored": revived}
+
+
 def get_clarification_session(session_id: str) -> dict | None:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT session_id, conversation_id, status, round_count, max_rounds, created_by, created_at, updated_at "
-            "FROM clarification_sessions WHERE session_id=%s", (session_id,)).fetchone()
+            "SELECT session_id, conversation_id, status, round_count, max_rounds, created_by, created_at, updated_at, "
+            "resolution_note, resolved_by, resolved_at "
+            "FROM clarification_sessions WHERE session_id=%s AND deleted_at IS NULL", (session_id,)).fetchone()
         if row is None:
             return None
-        keys = ("session_id", "conversation_id", "status", "round_count", "max_rounds", "created_by", "created_at", "updated_at")
+        keys = ("session_id", "conversation_id", "status", "round_count", "max_rounds", "created_by", "created_at", "updated_at",
+                "resolution_note", "resolved_by", "resolved_at")
         result = dict(zip(keys, row))
         result["turns"] = list_clarification_turns(session_id)
         result["answers"] = list_clarification_answers(session_id)
         return result
+
+
+def resolve_clarification_session(session_id: str, status: str, resolved_by: str,
+                                  note: str | None = None) -> dict:
+    """人工处置澄清会话：关闭（cancelled）或补充事实后重开（open）。
+
+    - 仅允许 open / needs_human_review 被处置；completed / cancelled 是终态（防重复处置）。
+    - 重开要求还有可用的 Agent 运行预算：最多 `max_rounds` 轮追问 + 1 次收尾判定，
+      即 `round_count <= max_rounds` 时可重开；**人工不得加轮次**（否则绕过 SA-10 的有限轮次约束）。
+    """
+    if status not in {"open", "cancelled"}:
+        raise ValueError("resolution status 只能是 open 或 cancelled")
+    if not (session_id or "").strip() or not (resolved_by or "").strip():
+        raise ValueError("session_id / resolved_by 不能为空")
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT status, round_count, max_rounds FROM clarification_sessions WHERE session_id=%s FOR UPDATE",
+            (session_id,)).fetchone()
+        if row is None:
+            raise KeyError("澄清会话不存在")
+        current, round_count, max_rounds = row
+        if current in ("completed", "cancelled"):
+            raise ValueError(f"澄清会话已结束（{current}），不可再处置")
+        if status == "open" and round_count > max_rounds:
+            raise ValueError("轮次已用尽（含收尾判定），不能重开；请关闭会话并改走状态建议流程")
+        updated = conn.execute(
+            "UPDATE clarification_sessions SET status=%s, resolution_note=%s, resolved_by=%s, "
+            "resolved_at=now(), updated_at=now() WHERE session_id=%s "
+            "RETURNING session_id, conversation_id, status, round_count, max_rounds, created_by, "
+            "resolution_note, resolved_by, resolved_at, created_at, updated_at",
+            (status, note, resolved_by, session_id)).fetchone()
+    keys = ("session_id", "conversation_id", "status", "round_count", "max_rounds", "created_by",
+            "resolution_note", "resolved_by", "resolved_at", "created_at", "updated_at")
+    return dict(zip(keys, updated))
 
 
 def list_clarification_turns(session_id: str) -> list[dict]:
@@ -211,8 +298,14 @@ def list_clarification_turns(session_id: str) -> list[dict]:
 
 def append_clarification_turn(session_id: str, status: str, agent_output: dict,
                               question_count: int, input_tokens: int | None = None,
-                              output_tokens: int | None = None, latency_ms: int | None = None) -> dict:
-    """追加一轮 Agent 输出；轮次达到上限后自动关闭会话，不允许无限追问。"""
+                              output_tokens: int | None = None, latency_ms: int | None = None,
+                              expected_round_count: int | None = None) -> dict:
+    """追加一轮 Agent 输出；轮次达到上限后自动关闭会话，不允许无限追问。
+
+    expected_round_count：调用方**在调用模型之前**读到的轮次。传入即启用乐观锁——
+    模型调用耗时数秒，期间会话可能已被并发/重复请求推进；此时基于旧轮次的写入必须
+    失败，否则会写出内容重复的一轮并提前耗尽轮次预算（前端重复打开会话即可触发）。
+    """
     allowed = {"needs_clarification", "ready_for_proposal", "insufficient_evidence", "human_review"}
     if status not in allowed or not isinstance(agent_output, dict) or not 0 <= question_count <= 2:
         raise ValueError("turn 参数不合法")
@@ -225,24 +318,37 @@ def append_clarification_turn(session_id: str, status: str, agent_output: dict,
         round_count, max_rounds, session_status = row
         if session_status != "open":
             raise ValueError("澄清会话已关闭")
-        if round_count >= max_rounds:
-            raise ValueError("已达到最大澄清轮次")
+        # 方案 A 语义：max_rounds = 最多**追问**轮数；预算用尽后仍允许**一次收尾判定**
+        # （结论轮），因此上限是 max_rounds + 1 次 Agent 运行。
+        if round_count > max_rounds:
+            raise ValueError("已达到最大澄清轮次（含收尾判定）")
+        if round_count == max_rounds and status == "needs_clarification":
+            raise ValueError("追问轮次已用尽：收尾轮不得再提出追问")
+        if expected_round_count is not None and round_count != expected_round_count:
+            raise ValueError("并发推进冲突：会话轮次已被其他请求推进")
         turn_no = round_count + 1
+        # 会话状态映射（会话词表没有 insufficient_evidence，必须显式归一，否则撞 CHECK）：
+        # - 追问轮一律保持 open：包括"最后一轮追问"，让这一轮的问题能被回答（不再问了不给答）
+        # - 证据不足 / 模型失败 → 转人工
+        # - 资源就绪 → 可生成建议
+        if status == "needs_clarification":
+            next_status = "open"
+        elif status in ("insufficient_evidence", "human_review"):
+            next_status = "needs_human_review"
+        else:
+            next_status = "ready_for_proposal"
+        # 先抢占轮次（乐观锁）：并发重复触发时只有一个请求能推进，另一个 UPDATE 命中 0 行即失败
+        claimed = conn.execute(
+            "UPDATE clarification_sessions SET round_count=%s, status=%s, updated_at=now() "
+            "WHERE session_id=%s AND round_count=%s AND status='open'",
+            (turn_no, next_status, session_id, round_count))
+        if claimed.rowcount == 0:
+            raise ValueError("并发推进冲突：会话轮次已被其他请求推进")
         turn_id = _clarification_id("turn")
         turn = conn.execute(
             "INSERT INTO clarification_turns (turn_id, session_id, turn_no, status, agent_output, question_count, input_tokens, output_tokens, latency_ms) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING turn_id, session_id, turn_no, status, agent_output, question_count, input_tokens, output_tokens, latency_ms, created_at",
             (turn_id, session_id, turn_no, status, Jsonb(agent_output), question_count, input_tokens, output_tokens, latency_ms)).fetchone()
-        # 最后一轮仍有缺口时明确转人工，避免无限追问。
-        # turn 与 session 的状态词表不同（turn 用 human_review，session 用 needs_human_review），
-        # 必须显式映射，否则会话侧会撞 CHECK 约束。
-        next_status = (
-            "open" if status == "needs_clarification" and turn_no < max_rounds
-            else "needs_human_review" if status in ("needs_clarification", "human_review")
-            else status
-        )
-        conn.execute("UPDATE clarification_sessions SET round_count=%s, status=%s, updated_at=now() WHERE session_id=%s",
-                     (turn_no, next_status, session_id))
     keys = ("turn_id", "session_id", "turn_no", "status", "agent_output", "question_count", "input_tokens", "output_tokens", "latency_ms", "created_at")
     return dict(zip(keys, turn))
 
@@ -288,17 +394,21 @@ def list_clarification_answers(session_id: str) -> list[dict]:
     return [dict(zip(keys, row)) for row in rows]
 
 
-def list_user_clarification_sessions(username: str, limit: int = 100) -> list[dict]:
-    """销售工作台只读取自己创建的会话，返回最新一轮摘要。"""
+def list_user_clarification_sessions(username: str, limit: int = 100,
+                                     include_deleted: bool = False) -> list[dict]:
+    """销售工作台只读取自己创建的会话；归档默认不列出（管理员可显式包含）。"""
     limit = max(1, min(limit, 500))
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT s.session_id, s.conversation_id, c.customer_id, s.status, s.round_count, "
-            "s.max_rounds, s.created_by, s.created_at, s.updated_at "
+            "s.max_rounds, s.created_by, s.created_at, s.updated_at, s.resolution_note, s.resolved_by, "
+            "s.deleted_at, s.deleted_by "
             "FROM clarification_sessions s JOIN conversations c ON c.conversation_id=s.conversation_id "
-            "WHERE s.created_by=%s ORDER BY s.updated_at DESC LIMIT %s", (username, limit)).fetchall()
+            "WHERE s.created_by=%s AND (%s OR s.deleted_at IS NULL) "
+            "ORDER BY s.updated_at DESC LIMIT %s", (username, include_deleted, limit)).fetchall()
     keys = ("session_id", "conversation_id", "customer_id", "status", "round_count", "max_rounds",
-            "created_by", "created_at", "updated_at")
+            "created_by", "created_at", "updated_at", "resolution_note", "resolved_by",
+            "deleted_at", "deleted_by")
     return [dict(zip(keys, row)) for row in rows]
 
 

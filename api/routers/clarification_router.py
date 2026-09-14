@@ -5,13 +5,15 @@ import db
 import rules
 from api import auth, trace as trace_mod
 from api.audit import audit_log
-from api.schemas import ClarificationAnswerRequest, ClarificationSessionRequest, SalesIntakeRequest
+from api.schemas import (ClarificationAnswerRequest, ClarificationResolveRequest,
+                         ClarificationSessionRequest, SalesIntakeRequest)
 
 import customer_state
 import sales_preprocess
 import clarification_service
 import model_port
 import sensitive_cipher
+import state_proposal_service
 
 router = APIRouter(prefix="/clarifications", tags=["clarification"])
 
@@ -132,6 +134,9 @@ def get_session(session_id: str, advance: bool = False,
     result = db.get_clarification_session(session_id)
     if result is None:
         raise HTTPException(status_code=404, detail="澄清会话不存在")
+    # 已交负责人的标记：让工作台能显示"建议已生成、等确认"，而不是看起来毫无变化
+    result["pending_proposal"] = state_proposal_service.pending_proposal_for_conversation(
+        result["conversation_id"])
     return result
 
 
@@ -167,9 +172,75 @@ def advance(session_id: str, user: auth.User = Depends(auth.get_current_user)):
     return outcome
 
 
+@router.post("/sessions/{session_id}/proposal", response_model=dict)
+def create_state_proposal(session_id: str, request: Request,
+                          user: auth.User = Depends(auth.get_current_user),
+                          _trace: auth.User = Depends(trace_mod.trace("clarification_proposal"))):
+    """把澄清结论转成**待确认状态建议**（确定性规则，不调模型）。
+
+    边界：只创建建议——客户状态仍只能由负责人在「客户状态」确认后经
+    state_decisions → state_events 写入。同一洽谈已有 pending 建议则复用（幂等）。
+    """
+    if not _allowed(user, session_id):
+        raise HTTPException(status_code=403, detail="无权为该澄清会话生成状态建议")
+    try:
+        result = state_proposal_service.generate_proposal_for_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'\"")) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    proposal = result.get("proposal") or {}
+    audit_log(user.username, "clarification_proposal", target_path=session_id,
+              detail={"generated": result.get("generated"), "reused": result.get("reused"),
+                      "proposed_state": result.get("proposed_state") or proposal.get("proposed_state")})
+    request.state.trace_detail = {"operation": "clarification_proposal", "session_id": session_id,
+                                 "generated": result.get("generated"), "reused": result.get("reused")}
+    return result
+
+
+@router.delete("/sessions/{session_id}", response_model=dict)
+def delete_session(session_id: str, request: Request,
+                   user: auth.User = Depends(auth.require_roles("admin")),
+                   _trace: auth.User = Depends(trace_mod.trace("clarification_session_delete"))):
+    """归档澄清会话（**仅管理员**）：软删除会话与其产生的状态建议。
+
+    边界：**不删状态事件/决策**——客户事实只能追加更正/撤回/过期（SA-02）；归档可恢复。
+    """
+    try:
+        result = db.soft_delete_clarification_session(session_id, user.username)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'\"")) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit_log(user.username, "clarification_session_delete", target_path=session_id,
+              detail={"already_deleted": result["already_deleted"],
+                      "proposals_archived": result["proposals_archived"]})
+    request.state.trace_detail = {"operation": "clarification_session_delete", "session_id": session_id}
+    return result
+
+
+@router.post("/sessions/{session_id}/restore", response_model=dict)
+def restore_session(session_id: str, request: Request,
+                    user: auth.User = Depends(auth.require_roles("admin")),
+                    _trace: auth.User = Depends(trace_mod.trace("clarification_session_restore"))):
+    """恢复已归档的澄清会话与建议（**仅管理员**）。"""
+    try:
+        result = db.restore_clarification_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'\"")) from exc
+    audit_log(user.username, "clarification_session_restore", target_path=session_id,
+              detail={"restored": result.get("restored")})
+    request.state.trace_detail = {"operation": "clarification_session_restore", "session_id": session_id}
+    return result
+
+
 @router.get("/mine", response_model=list[dict])
-def mine(user: auth.User = Depends(auth.get_current_user)):
-    return db.list_user_clarification_sessions(user.username)
+def mine(include_deleted: bool = False,
+         user: auth.User = Depends(auth.get_current_user)):
+    """我创建的澄清会话；archived（已归档）默认不列出，管理员可显式包含。"""
+    if include_deleted and user.role != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可查看已归档会话")
+    return db.list_user_clarification_sessions(user.username, include_deleted=include_deleted)
 
 
 @router.post("/sessions/{session_id}/answers", response_model=dict)
@@ -193,11 +264,44 @@ def answer(session_id: str, body: ClarificationAnswerRequest, request: Request,
     return result
 
 
+@router.post("/sessions/{session_id}/resolve", response_model=dict)
+def resolve(session_id: str, body: ClarificationResolveRequest, request: Request,
+            user: auth.User = Depends(auth.require_roles("reviewer", "admin")),
+            _trace: auth.User = Depends(trace_mod.trace("clarification_resolve"))):
+    """人工处置转人工的会话（闭环）：关闭（必填原因）或补充事实后重开继续。
+
+    边界（SA-10/SA-11）：轮次上限由产品约束（max_rounds ≤ 2），人工不加轮次——
+    轮次已用尽只能关闭并改走状态建议流程。人工处置**只动会话**，客户状态仍只能经
+    状态建议 → 负责人确认 → state_events 写入。
+    """
+    if body.decision not in {"closed", "reopened"}:
+        raise HTTPException(status_code=400, detail="decision 只能是 closed 或 reopened")
+    if body.decision == "closed" and not (body.reason or "").strip():
+        raise HTTPException(status_code=400, detail="关闭会话必须填写原因")
+    if body.answer_text_redacted and rules.check_sensitive(body.answer_text_redacted) != "pass":
+        raise HTTPException(status_code=400, detail="补充事实必须先完成脱敏，不得提交个人信息、密钥或精确敏感数值")
+    try:
+        result = clarification_service.resolve_session(
+            session_id, body.decision, user.username,
+            answer_text_redacted=body.answer_text_redacted, question_id=body.question_id,
+            note=body.reason)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'\"")) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit_log(user.username, "clarification_resolve", target_path=session_id,
+              detail={"decision": body.decision, "reason": (body.reason or "")[:200]})
+    request.state.trace_detail = {"operation": "clarification_resolve", "session_id": session_id,
+                                  "decision": body.decision}
+    return result
+
+
 @router.get("/sessions", response_model=list[dict])
 def list_sessions(user: auth.User = Depends(auth.require_roles("reviewer", "admin"))):
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT session_id, conversation_id, status, round_count, max_rounds, created_by, created_at, updated_at "
-            "FROM clarification_sessions ORDER BY updated_at DESC LIMIT 100").fetchall()
+            "FROM clarification_sessions WHERE deleted_at IS NULL "
+            "ORDER BY updated_at DESC LIMIT 100").fetchall()
     keys = ("session_id", "conversation_id", "status", "round_count", "max_rounds", "created_by", "created_at", "updated_at")
     return [dict(zip(keys, row)) for row in rows]
