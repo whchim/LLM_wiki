@@ -80,9 +80,15 @@ def test_tasks_and_retry_flow(client, headers):
 
 
 def test_upload_trigger_failure_compensates(client, headers, tmp_path, monkeypatch):
-    """触发文件写入失败：已插任务补偿为 failed，不残留无触发的 pending。"""
+    """**CLI 引擎**下触发文件写入失败：已插任务补偿为 failed，不残留无触发的 pending。
+
+    注意：应用内引擎（`COMPILE_ENGINE=api`，默认）由队列 worker 认领，**不写触发文件**，
+    因此本用例显式切到 `claude_cli` 才验证这条补偿路径（对照用例见 test_compile_queue.py）。
+    """
     import api.routers.upload_router as ur
     import ops as ops_mod
+
+    monkeypatch.setenv("COMPILE_ENGINE", "claude_cli")
 
     def boom(kind, paths, source):
         raise OSError("模拟 _triggers 目录不可写")

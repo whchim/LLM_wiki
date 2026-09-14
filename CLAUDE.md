@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **应用层（垂直落地）**——销售客户状态 Agent 生产形态原型（销售洽谈记录 → 证据提取 → 状态建议 → 负责人确认 → 可审计状态事件），配套销售事实澄清 Agent（信息不足时先追问而非猜状态）。需求唯一来源 `docs/SA-01_销售客户状态Agent_业务契约.md`。核心原则：**不让模型直接改客户事实**——Agent 只提建议，`StateEvent` 是事实唯一写入口，`CurrentState` 是可重建投影。
 - 应用层复用知识层的 FastAPI/JWT/审计/PG 地基；**知识层不反向依赖应用层**。当前知识库为空骨架（企业业务内容已脱敏移除），知识层作为背景知识保留。
 
-**当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台、转人工处置闭环、状态建议规则+模型双引擎）。**pytest 收集 353 个用例** + CI（测试 + Prompt 退化检测 + 检索合成集门禁）+ LLM 输出契约校验。
+**当前状态**：Phase 2 已交付（SP1 PostgreSQL 迁移 / SP2 FastAPI+JWT 认证 / SP2.5 可观测 / SP3 watcher 全自动编译 / SP4 混合检索 / SP5 健康巡检）；销售 Agent 阶段 0-5 已交付（含 Vue 3 工作台、转人工处置闭环、状态建议规则+模型双引擎）。**pytest 收集 380 个用例** + CI（测试 + Prompt 退化检测 + 检索合成集门禁）+ LLM 输出契约校验。
 
 **快速启动**：`bash init.sh && docker compose up -d`（三容器：`db`=PostgreSQL 16+pgvector、`api`=FastAPI、`web`=Vue 工作台（nginx 托管 + `/api` 反代）；容器启动自愈建目录/表/初始管理员，幂等）。工作台 `:8501`；开发态前端 `cd frontend && npm run dev`（:5173，Vite 代理到 :8000）。知识浏览：工作台「全部条目」页在线预览正文，图谱用 Obsidian 打开 `vault/`。
 
@@ -84,7 +84,9 @@ Vue 工作台（nginx 托管 + /api 反代） ←HTTP→ api/（FastAPI）→ Po
 
 ## 关键机制
 
-- **编译引擎（双驱动，同一契约）**：`COMPILE_ENGINE=api`（默认，**应用内**：`tools/compile_worker.py` → `core/compile_service.py` → `ModelPort`；容器内可跑、可测、可计量、可租户隔离，**云端生产路径**）｜ `claude_cli`（`tools/trigger_watcher.py` → headless Claude Code 消费 `workflows/*.md`；自主性更强但依赖宿主机 CLI/登录态，**本地开发与开放探索任务**）。两者共用 `prompts/compile_prompt.md` + `output_schema` 校验，产出物与落库结果一致。流水线纪律：**指纹幂等**（同内容跳过不烧 token）→ **门禁先于模型**（`blocked` 不送模型）→ 模型 → **契约违例回灌重试** → 落盘（资源 `active` / 概念 `pending`）+ 双写 `knowledge_entries` → `compile_session` trace（detail 带 `engine`）。`_write_markdown` 写前校验 frontmatter，不合契约直接 failed 不落盘。设计见 `docs/WIKI-70`
+- **编译引擎（双驱动 + 队列，同一契约）**：`COMPILE_ENGINE=api`（默认，**应用内**：`tools/compile_worker.py` → `core/compile_service.py` → `ModelPort`；容器内可跑、可测、可计量、可租户隔离，**云端生产路径**）｜ `claude_cli`（`tools/trigger_watcher.py` → headless Claude Code 消费 `workflows/*.md`；自主性更强但依赖宿主机 CLI/登录态，**本地开发与开放探索任务**）。两者共用 `prompts/compile_prompt.md` + `output_schema` 校验，产出物与落库结果一致。流水线纪律：**指纹幂等**（同路径同指纹已 done → skipped，**重放 0 token**，队列模式也查历史 done 记录）→ **门禁先于模型**（`blocked` 不送模型）→ 模型 → **契约违例回灌重试** → 落盘（资源 `active` / 概念 `pending`）+ 双写 `knowledge_entries` → `compile_session` trace（detail 带 `engine`）。`_write_markdown` 写前校验 frontmatter，不合契约直接 failed 不落盘。设计见 `docs/WIKI-70`
+- **任务队列（L2，可并发认领）**：`compile_tasks` 已升级为真队列——`tenant_id`（默认 `default`）/ `lease_until`+`leased_by`（**租约**：worker 崩溃后过期即自动回到可认领态）/ `attempts`+`next_retry_at`（**指数退避**）/ `priority`（交互式上传 10 先于批量 100），时间戳为 `timestamptz`，认领走 **`FOR UPDATE SKIP LOCKED`**（`db.claim_compile_task`）。`tools/compile_worker.py --queue` 消费（失败 1/2/4 分钟退避，attempts 用尽才落终态）；`/uploads` **直接入队**，**触发纸条只在 `claude_cli` 引擎下写**（两边同时消费会重复编译）；`/uploads/tasks/{id}/retry` 对应用内引擎走 `requeue`。`db.queue_stats()` 给各状态计数与最老待处理年龄
+- **审核引擎（同样下沉，规则/模型分工更明确）**：`core/review_service.py` + `tools/review_worker.py`（`REVIEW_ENGINE=api|claude_cli`）——完整性/敏感信息**两维由代码判**（`rules.*`；`blocked` 时不送模型），去重/职务归属/质量/合规**四维交模型**（`prompts/review_prompt.md`），**verdict 由代码按判定逻辑链计算**（模型自报只作对照，不一致时记 concern 并留档 `verdict_model`）；落库形状与契约一致（工作台读 `ai_scores.scores.<维度>`，`review_router` 判 `ai_scores_valid`）。**人工作业不变**：通过/驳回走 `/reviews/{id}/approve|reject` → `ops.approve_entry` 移文件 + 双写，模型永不直接发布条目
 - **规则/模型分工**：确定性可断言的部分交程序（完整性/敏感信息正则、金额阈值、状态转移约束、权限），模糊语义交模型（质量/合规/去重/职务归属、事实抽取与追问）
 - **销售状态机**：7 状态（`new_lead`/`contacted`/`need_confirmed`/`solution_eval`/`commercial_negotiation`/`won`/`lost_or_paused`），每状态有最低证据要求与默认有效期；证据不足必须输出 `needs_review` 不得猜测；`won` 需强证据；撤回/更正/过期均**追加新事件**，不删除历史
 - **澄清优先于猜测**：销售事实澄清 Agent 在信息不足时先按 SA-11 契约追问（槽位 + 追问规则），而不是直接给状态建议

@@ -217,10 +217,16 @@ def _record_session_trace(*, trace_id: str, results: list[CompileResult], latenc
 
 def compile_one(raw_relpath: str, *, port=None, max_tokens: int | None = None,
                 max_retries: int = DEFAULT_MAX_RETRIES,
-                system_prompt: str | None = None) -> CompileResult:
-    """编译单篇 RAW 文档；返回结果（**不抛业务异常**，失败落在 result.error）。"""
+                system_prompt: str | None = None,
+                task_id: int | None = None) -> CompileResult:
+    """编译单篇 RAW 文档；返回结果（**不抛业务异常**，失败落在 result.error）。
+
+    `task_id` 给定时表示"该任务已由队列 worker 认领"（L2）：本函数**不再创建/更新任务状态**，
+    生命周期（重试退避、终态、租约释放）归 worker——这样多个 worker 可以并发认领不同任务。
+    """
     started = time.perf_counter()
     result = CompileResult(raw_path=raw_relpath, status="failed")
+    own_task = task_id is None
     raw_abs = kb_root() / raw_relpath
     if not raw_abs.exists():
         result.error = f"RAW 文件不存在：{raw_relpath}"
@@ -230,33 +236,39 @@ def compile_one(raw_relpath: str, *, port=None, max_tokens: int | None = None,
     fingerprint = sha256_text(text)
     result.truncated = len(text) > MAX_INPUT_CHARS
 
-    # ---- 断点续跑：同路径同指纹的 done/cached 任务直接跳过（不烧 token）----
-    last = db.latest_compile_task(raw_relpath)
-    if last and last["status"] in ("done", "cached") and last["fingerprint"] == fingerprint:
+    # ---- 指纹幂等：同路径同指纹已编译过就跳过（两种模式都生效）----
+    # 队列模式（task_id 已给定）也必须查：同一个文件可能被重复入队（上传/扫描/人工重试），
+    # 只看"最新任务"会漏掉历史 done 记录，从而重复编译并产出 `xxx-2.md`（实测问题）。
+    done = db.find_done_compile_task(raw_relpath, fingerprint, exclude_id=task_id)
+    if done is not None:
         result.status = "skipped"
-        result.task_id = last["id"]
-        result.resource_path = last.get("nexus_path")
+        result.task_id = task_id if task_id is not None else done["id"]
+        result.resource_path = done.get("nexus_path")
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         return result
 
     # ---- 门禁在模型之前：命中 blocked 的文档不送模型 ----
     verdict = rules.check_sensitive(text)
     if verdict == "blocked":
-        task_id = db.insert_compile_task(raw_relpath, fingerprint)
-        db.update_compile_task(task_id, "failed", error_msg="门禁拦截（敏感信息/内部标记）")
+        if own_task:
+            task_id = db.insert_compile_task(raw_relpath, fingerprint)
+            db.update_compile_task(task_id, "failed", error_msg="门禁拦截（敏感信息/内部标记）")
         result.task_id = task_id
         result.error = "提交门禁拦截：文档含不可外发的敏感信息或内部标记"
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         return result
 
-    task_id = db.insert_compile_task(raw_relpath, fingerprint)
+    if own_task:
+        task_id = db.insert_compile_task(raw_relpath, fingerprint)
+        db.update_compile_task(task_id, "processing")
     result.task_id = task_id
-    db.update_compile_task(task_id, "processing")
 
     if port is None:
         port = model_port.default_port()
     if port is None:
-        db.update_compile_task(task_id, "failed", error_msg="未配置模型（MODEL_API_KEY / DASHSCOPE_API_KEY）")
+        if own_task:
+            db.update_compile_task(task_id, "failed",
+                                   error_msg="未配置模型（MODEL_API_KEY / DASHSCOPE_API_KEY）")
         result.error = "未配置模型"
         return result
 
@@ -290,8 +302,9 @@ def compile_one(raw_relpath: str, *, port=None, max_tokens: int | None = None,
             user_text = f"{user_text}\n{feedback}"
 
     if parsed is None:
-        db.update_compile_task(task_id, "failed",
-                               error_msg=(result.attempts[-1].get("error") or "编译失败")[:500])
+        if own_task:
+            db.update_compile_task(task_id, "failed",
+                                   error_msg=(result.attempts[-1].get("error") or "编译失败")[:500])
         result.error = result.attempts[-1].get("error") or "编译失败"
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         return result
@@ -299,12 +312,14 @@ def compile_one(raw_relpath: str, *, port=None, max_tokens: int | None = None,
     try:
         resource_path, concept_paths = _write_products(parsed, raw_relpath, fingerprint)
     except Exception as exc:
-        db.update_compile_task(task_id, "failed", error_msg=f"落盘失败：{exc}"[:500])
+        if own_task:
+            db.update_compile_task(task_id, "failed", error_msg=f"落盘失败：{exc}"[:500])
         result.error = f"落盘失败：{exc}"
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         return result
 
-    db.update_compile_task(task_id, "done", nexus_path=resource_path)
+    if own_task:
+        db.update_compile_task(task_id, "done", nexus_path=resource_path)
     result.status = "done"
     result.resource_path = resource_path
     result.concept_paths = concept_paths

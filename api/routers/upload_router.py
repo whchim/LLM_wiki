@@ -20,7 +20,15 @@ router = APIRouter(prefix="/uploads", tags=["upload"])
 def _kb_root() -> str:
     return os.environ.get("KB_ROOT", os.path.join(os.path.dirname(ops.__file__), "..", "vault"))
 
+
+def _engine() -> str:
+    """编译引擎：api（默认，应用内队列）/ claude_cli（触发文件 + headless Claude Code）。"""
+    engine = os.environ.get("COMPILE_ENGINE", "api").strip().lower()
+    return engine if engine in {"api", "claude_cli"} else "api"
+
+
 CATEGORIES = ["个人_notes", "会议", "经验", "项目"]
+UPLOAD_PRIORITY = 10          # 交互式上传：优先于批量扫描（默认 100）
 MAX_FILES = 20
 MAX_BATCH_SIZE = 50 * 1024 * 1024
 MAX_FILENAME_LENGTH = 180
@@ -102,7 +110,8 @@ async def upload_files(
     try:
         for path in saved:
             fingerprint = ops.sha256_file(str(Path(_kb_root()) / path))
-            task_ids.append(db.insert_compile_task(path, fingerprint))
+            # L2：上传即入队（交互式任务用更高优先级 10，批量扫描默认 100）
+            task_ids.append(db.enqueue_compile_task(path, fingerprint, priority=UPLOAD_PRIORITY))
     except Exception as e:
         for tid in task_ids:
             try:
@@ -111,15 +120,18 @@ async def upload_files(
                 pass
         raise HTTPException(status_code=500, detail=f"任务入库失败（{e}）。建议：稍后重试或重建索引。")
 
-    try:
-        ops.write_trigger("compile", saved, "api")
-    except OSError as e:
-        for tid in task_ids:
-            try:
-                db.update_compile_task(tid, "failed", error_msg=f"触发文件写入失败：{e}")
-            except Exception:
-                pass
-        raise HTTPException(status_code=500, detail=f"触发文件写入失败（{e}）。本批任务已置为失败。")
+    # 触发纸条只服务 CLI 引擎（本地开发）；应用内引擎（默认）由队列 worker 认领，
+    # 两边同时消费会重复编译，所以按引擎分流。
+    if _engine() == "claude_cli":
+        try:
+            ops.write_trigger("compile", saved, "api")
+        except OSError as e:
+            for tid in task_ids:
+                try:
+                    db.update_compile_task(tid, "failed", error_msg=f"触发文件写入失败：{e}")
+                except Exception:
+                    pass
+            raise HTTPException(status_code=500, detail=f"触发文件写入失败（{e}）。本批任务已置为失败。")
 
     audit_log(user.username, "upload", target_path=(",".join(saved))[:500],
               detail={"files": saved, "category": category})
@@ -136,15 +148,16 @@ def list_tasks(limit: int = Query(50, ge=1, le=500),
 @router.post("/tasks/{task_id}/retry", response_model=dict)
 def retry_task(task_id: int,
                user: auth.User = Depends(auth.require_roles("user", "admin"))):
-    """failed 任务重试：重新写触发文件 + 置回 pending。"""
+    """failed 任务重试：置回 pending（应用内引擎由队列 worker 认领；CLI 引擎另写触发文件）。"""
     rows = db.list_recent_compile_tasks(10000)
     target = next((r for r in rows if r["id"] == task_id), None)
     if target is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     if target["status"] != "failed":
         raise HTTPException(status_code=409, detail=f"仅 failed 任务可重试（当前 status={target['status']}）")
-    ops.write_trigger("compile", [target["raw_path"]], "api")
-    db.update_compile_task(task_id, "pending")
+    db.requeue_compile_task(task_id)          # 清空 attempts/退避，重新可认领
+    if _engine() == "claude_cli":
+        ops.write_trigger("compile", [target["raw_path"]], "api")
     audit_log(user.username, "retry_compile", target_path=target["raw_path"],
               detail={"task_id": task_id})
     return {"message": "任务已重新加入编译队列", "task_id": task_id}

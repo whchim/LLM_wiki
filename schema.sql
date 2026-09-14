@@ -27,6 +27,21 @@ CREATE TABLE IF NOT EXISTS compile_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON compile_tasks(status);
 
+-- L2 队列化（幂等）：compile_tasks 从"记录表"升级为可并发认领的工作队列。
+-- 背景：原表无租户、无租约、无尝试次数，时间戳还是 TEXT——多 worker 会抢同一任务，
+-- 崩溃后任务会卡死，也无法按租户隔离（详见 docs/WIKI-70 §5 L2）。
+ALTER TABLE compile_tasks ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE compile_tasks ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE compile_tasks ADD COLUMN IF NOT EXISTS leased_by TEXT;
+ALTER TABLE compile_tasks ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE compile_tasks ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
+ALTER TABLE compile_tasks ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE compile_tasks ALTER COLUMN started_at   TYPE TIMESTAMPTZ USING started_at::timestamptz;
+ALTER TABLE compile_tasks ALTER COLUMN completed_at TYPE TIMESTAMPTZ USING completed_at::timestamptz;
+-- 认领索引：按 (status, next_retry_at, priority, id) 取下一个任务，配合 FOR UPDATE SKIP LOCKED
+CREATE INDEX IF NOT EXISTS idx_tasks_claim  ON compile_tasks(status, next_retry_at, priority, id);
+CREATE INDEX IF NOT EXISTS idx_tasks_tenant ON compile_tasks(tenant_id, status);
+
 CREATE TABLE IF NOT EXISTS pending_reviews (
     id             INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     nexus_path     TEXT NOT NULL,

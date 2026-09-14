@@ -52,6 +52,22 @@
 
 ## 3. 应用内引擎设计（`core/compile_service.py`）
 
+### 3.0 审核引擎同样下沉（`core/review_service.py`）
+
+审核阶段原先也只有 CLI 驱动（`review_workflow.md`）。同一套理由让它一并下沉，分工反而更清晰：
+
+| 维度 | 由谁判定 | 依据 |
+|---|---|---|
+| 一 完整性 | **代码** | `rules.check_completeness`（四字段 + 正文 ≥100 中文字符） |
+| 五 敏感信息 | **代码** | `rules.check_sensitive`（命中 `blocked` 时**不送模型**，一票否决） |
+| 二 去重 / 三 职务归属 / 四 质量 / 六 合规 | **模型** | `prompts/review_prompt.md`（一次调用出四维） |
+| **verdict** | **代码** | `review_prompt.md` §判定逻辑链；模型自报的 verdict 只作对照，不一致时记 concern 并留档 `verdict_model` |
+
+落库 JSON 形状与 `review_prompt.md` 输出契约一致（`verdict / department / scores{...} / duplicates / concerns / summary`）——
+因为 `review_router._to_out` 会拿它跑 `validate_review_output` 判 `ai_scores_valid`，工作台也按 `ai_scores.scores.<维度>` 取值。
+**人工作业不变**：通过/驳回仍走 `/reviews/{id}/approve|reject` → `ops.approve_entry` 移文件 + 双写；模型永不直接发布条目。
+驱动：`tools/review_worker.py`（`REVIEW_ENGINE=api|claude_cli`）。
+
 ### 3.1 流水线（把 workflow 的步骤代码化）
 
 | 步 | 动作 | 代码位置 | 说明 |
@@ -109,20 +125,34 @@
 
 L1 只解决"引擎能进容器"。要在云端做多租户，还差三层：
 
-### L2 队列服务化（把 `compile_tasks` 变成真队列）
+### L2 队列服务化（把 `compile_tasks` 变成真队列）—— ✅ 已实现
 
-现状实测：`compile_tasks(id, raw_path, nexus_path, fingerprint, status, error_msg, started_at TEXT, completed_at TEXT)`
-——**是记录表，不是队列**：无租户、无租约、无尝试次数，时间戳还是 TEXT。
+改造前实测：`compile_tasks(id, raw_path, nexus_path, fingerprint, status, error_msg, started_at TEXT, completed_at TEXT)`
+——**是记录表，不是队列**：无租户、无租约、无尝试次数，时间戳还是 TEXT，多 worker 会抢同一任务、崩溃即卡死。
 
-| 新增字段 | 用途 |
+**schema 变更**（`schema.sql`，全部幂等 `ADD COLUMN IF NOT EXISTS` + `ALTER … TYPE … USING`）：
+
+| 字段 | 用途 |
 |---|---|
-| `tenant_id` | 租户隔离 |
-| `lease_until` | 可见性超时：worker 崩溃后任务自动回到可认领态 |
-| `attempts` / `next_retry_at` | 指数退避重试（不再靠 watcher 的重试循环） |
-| `priority` | 交互式上传先于批量导入 |
-| `started_at/completed_at → timestamptz` + `(status, next_retry_at)` 索引 | 支持 `SELECT … FOR UPDATE SKIP LOCKED` 并发认领 |
+| `tenant_id`（默认 `default`） | 租户隔离（L3 的前置） |
+| `lease_until` / `leased_by` | **可见性超时**：worker 崩溃后租约过期，任务自动回到可认领态（自愈） |
+| `attempts` / `next_retry_at` | 指数退避重试（认领即 +1；退避期间不可认领） |
+| `priority`（默认 100） | 交互式上传 10 先于批量导入 100 |
+| `started_at/completed_at → TIMESTAMPTZ` | 时间算术（原为 TEXT） |
+| `idx_tasks_claim(status, next_retry_at, priority, id)` | 支撑认领扫描 |
 
-`/uploads` 直接入队（不再写文件纸条），watcher 退化为本地开发可选。
+**队列原语**（`core/db.py`）：`enqueue_compile_task` → `claim_compile_task`（`FOR UPDATE SKIP LOCKED` 单条原子认领）
+→ `finish_compile_task`（终态 / 带 `retry_backoff_seconds` 的退避重排）→ `requeue_compile_task`（人工重试，
+清空 attempts 与退避）→ `queue_stats`（各状态计数 + 最老待处理年龄，供看板）。
+
+**消费侧**：`tools/compile_worker.py --queue` 认领并编译，失败按 1/2/4 分钟退避，`attempts` 用尽才落终态 `failed`；
+`compile_service.compile_one(..., task_id=…)` 在"任务已被认领"时**不碰任务状态**（生命周期归 worker），
+因此多个 worker 进程/容器可并发跑同一队列。
+
+**入口侧**：`/uploads` 直接入队（`priority=10`）；**触发纸条只在 `COMPILE_ENGINE=claude_cli` 时写**——
+应用内引擎由队列消费，两边同时消费会重复编译。`/uploads/tasks/{id}/retry` 对应用内引擎走 `requeue`（不再依赖纸条）。
+
+> 仍未做：Stalled 任务的定时巡检（目前靠"下次认领时租约已过期"自愈）、跨机时钟漂移（同一 PG 时钟，暂无风险）。
 
 ### L3 多租户隔离
 
@@ -164,9 +194,17 @@ DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变
 | 产物 | 13 篇条目全部通过 `validate_entry_frontmatter`（0 违例） |
 | 落库 | `knowledge_entries`：资源 `active` / 概念 `pending` 与文件状态一致；`compile_tasks` 全 `done`；`compile_session` trace 带 `engine=api` |
 
-**真机暴露并修掉的两个契约问题**（都已补测试）：
+**真机暴露并修掉的三个问题**（都已补测试）：
 ① 自由标签违反落盘契约 → `_namespaced_tags` 清洗；
-② `source_type` 枚举覆盖不了真实语料 → 扩展 9 类。
+② `source_type` 枚举覆盖不了真实语料 → 扩展 9 类；
+③ **队列模式下重复编译**（L2 实测）：同一文件被重复入队时，`latest_compile_task` 只看到"自己这条 pending"，
+漏掉历史 `done` → 重复编译并产出 `xxx-2.md` 重复条目 → 新增 `db.find_done_compile_task(raw_path, fingerprint, exclude_id)`
+作为去重判据（两种模式都生效），真机复验重放 **0 token 且 `skipped`**。
+
+**人工作业闭环验收**（工作台按钮背后的 API）：
+9 条待审 → AI 判定（8 通过 / 1 转人工：`dedup=similar` + concerns≥3 被判定链正确降级）→
+人工放行 2 条 → 文件移入 `NEXUS/概念/` + frontmatter `status=active` + `index.md` 统计刷新（`资源 2 篇 · 概念 2 个`）
+→ `/entries` 显示 active/pending 分明 → `/search` 命中具体条目（grep 通道；向量通道待回填 embedding）。
 
 ---
 
@@ -177,8 +215,10 @@ DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变
 2. **上传分类仍是 4 类**（`个人_notes/会议/经验/项目`）：`upload_router.CATEGORIES`、前端下拉、
    `init.sh` 目录树未同步扩展；编译侧不受影响（`scan_new_raw` 遍历 RAW 下所有目录），但 UI 体验不一致。
 3. **概念页仍需人工放行**：这是设计边界（不让模型改事实），不做"自动发布"。
-4. **L2/L3/L4 未实现**：队列租约、RLS、租户模型配置与用量表仍是设计（§5）。
+4. **L3/L4 未实现**：RLS 隔离、租户模型配置与用量表仍是设计（§5）。
 5. **CLI 引擎保留但未在 CI 覆盖**：需要宿主机 CLI 与登录态，属本地开发路径。
+6. **向量通道未回填**：新编译条目的 `knowledge_entries.embedding` 为空，检索目前只命中 grep 通道，
+   需跑一次 embedding backfill 才是真正的双通道（属 SP4 既有能力，不在本设计范围）。
 
 ---
 
@@ -194,3 +234,16 @@ DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变
   `test_output_schema.test_compile_source_type_covers_real_corpus`。
   真机验收：容器内编译真实企业语料成功，13 篇条目 0 契约违例。
   多租户路线图（L2 队列 / L3 RLS 隔离 / L4 模型配置与用量进库）见 §5。
+- **v0.2（2026-09-14）**：① **审核引擎同样下沉**（`core/review_service.py` + `tools/review_worker.py`）：
+   完整性/敏感信息两维由代码判定、模糊四维交模型、**verdict 由代码按判定逻辑链计算**
+   （模型自报 verdict 只作对照，不一致时记 concern 并留档 `verdict_model`），落库形状与
+   `review_prompt.md` 契约一致（工作台按 `ai_scores.scores.<维度>` 取值、`review_router` 判 `ai_scores_valid`）；
+   新增 `tests/test_review_service.py`（18 例）。② **L2 队列服务化落地**：`compile_tasks` 加
+   `tenant_id/lease_until/leased_by/attempts/next_retry_at/priority` + 时间戳转 `timestamptz` + 认领索引；
+   `db` 新增 `enqueue/claim/finish/requeue/find_done/queue_stats` 队列原语（`FOR UPDATE SKIP LOCKED`）；
+   `compile_worker --queue` 并发认领 + 指数退避 + 租约自愈；`/uploads` 直接入队（优先级 10）、
+   **触发纸条只在 CLI 引擎下写**；`/uploads/tasks/{id}/retry` 对应用内引擎走 requeue；
+   新增 `tests/test_compile_queue.py`（9 例：认领互斥、租约自愈、退避与终态、优先级、租户过滤、
+   终态不可再认领、人工 requeue、重复入队不重复编译、上传入队不写纸条）。③ 真机暴露并修掉
+   "队列模式重复编译产出 `-2` 重复条目"（`db.find_done_compile_task`，复验重放 0 token）。
+   ④ 完整演示动线跑通：编译 → 审核 → 人工放行 → 浏览/检索（详见 §6）。

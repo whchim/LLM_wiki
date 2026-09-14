@@ -57,6 +57,60 @@ def _report(batch: dict, engine: str) -> None:
         print(line)
 
 
+def run_queue(limit: int | None = None, worker_id: str | None = None,
+              tenant_id: str | None = None, lease_seconds: int | None = None) -> dict:
+    """**队列模式（L2）**：从 `compile_tasks` 认领任务（FOR UPDATE SKIP LOCKED）并编译。
+
+    - 认领即占租约（默认 600s）：worker 崩溃后租约过期，任务自动回到可认领态（自愈）；
+    - 失败按指数退避重排（`attempts` 用尽才落终态 failed，人工「重试」走 requeue）；
+    - 多个 worker 进程/容器可并发跑同一队列，互不抢任务。
+    """
+    import db
+    import uuid as _uuid
+
+    worker_id = worker_id or f"{os.environ.get('HOSTNAME', 'local')}-{os.getpid()}"
+    lease = lease_seconds or db.DEFAULT_LEASE_SECONDS
+    max_tokens = int(os.environ.get("COMPILE_MAX_TOKENS", compile_service.DEFAULT_MAX_TOKENS))
+    results: list = []
+    started = time.perf_counter()
+    while limit is None or len(results) < limit:
+        task = db.claim_compile_task(worker_id, lease_seconds=lease, tenant_id=tenant_id)
+        if task is None:
+            break
+        print(f"[worker] 认领 #{task['id']} {task['raw_path']}"
+              f"（第 {task['attempts']} 次尝试，tenant={task['tenant_id']}）")
+        result = compile_service.compile_one(task["raw_path"], max_tokens=max_tokens,
+                                            task_id=task["id"])
+        results.append(result)
+        if result.status == "done":
+            db.finish_compile_task(task["id"], "done", nexus_path=result.resource_path)
+        elif result.status == "skipped":
+            db.finish_compile_task(task["id"], "cached")
+        else:
+            exhausted = task["attempts"] >= db.DEFAULT_MAX_ATTEMPTS
+            if exhausted:
+                db.finish_compile_task(task["id"], "failed", error_msg=result.error)
+            else:
+                backoff = 60 * (2 ** (task["attempts"] - 1))     # 1/2/4 分钟指数退避
+                db.finish_compile_task(task["id"], "pending", error_msg=result.error,
+                                       retry_backoff_seconds=backoff)
+                print(f"[worker] #{task['id']} 失败，退避 {backoff}s 后重试：{result.error}")
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    trace_id = _uuid.uuid4().hex
+    compile_service._record_session_trace(trace_id=trace_id, results=results, latency_ms=latency_ms)
+    return {
+        "mode": "queue", "worker_id": worker_id, "tenant_id": tenant_id or "default",
+        "compiled": sum(1 for r in results if r.status == "done"),
+        "cached": sum(1 for r in results if r.status in ("cached", "skipped")),
+        "failed": sum(1 for r in results if r.status == "failed"),
+        "files": [p for r in results for p in r.produced],
+        "latency_ms": latency_ms, "trace_id": trace_id,
+        "queue": db.queue_stats(tenant_id),
+        "results": [r.audit_dict() for r in results],
+    }
+
+
 def run_once(limit: int | None, engine: str, files: list[str] | None = None) -> dict:
     """扫一轮 RAW 增量（或指定文件）并编译。"""
     if engine == "claude_cli":
@@ -87,11 +141,15 @@ def _run_claude_cli(limit: int | None) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="编译 Worker（应用内引擎 / CLI 引擎）")
+    parser = argparse.ArgumentParser(description="编译 Worker（应用内引擎 / CLI 引擎 / 队列模式）")
     parser.add_argument("--once", action="store_true", help="扫一轮即退出（默认常驻轮询）")
+    parser.add_argument("--queue", action="store_true",
+                        help="队列模式（L2）：从 compile_tasks 认领任务而不是扫 RAW 增量")
     parser.add_argument("--limit", type=int, default=None, help="本轮最多处理篇数")
     parser.add_argument("--file", action="append", default=None,
                         help="指定 RAW 相对路径（相对 KB_ROOT；可重复传）")
+    parser.add_argument("--tenant", default=None, help="只认领该租户的任务（默认全部）")
+    parser.add_argument("--lease-seconds", type=int, default=None, help="任务租约秒数（默认 600）")
     parser.add_argument("--json", action="store_true", help="额外输出机器可读的 JSON 汇总")
     args = parser.parse_args()
 
@@ -100,13 +158,21 @@ def main() -> int:
     except ValueError as exc:
         print(f"[worker] {exc}", file=sys.stderr)
         return 2
+    if args.queue and engine == "claude_cli":
+        print("[worker] 队列模式只支持 engine=api（CLI 驱动走触发文件，不用 PG 队列）", file=sys.stderr)
+        return 2
 
     interval = int(os.environ.get("WORKER_INTERVAL", "10"))
-    print(f"[worker] KB_ROOT={compile_service.kb_root()} engine={engine}")
+    print(f"[worker] KB_ROOT={compile_service.kb_root()} engine={engine}"
+          f"{' mode=queue' if args.queue else ''}")
     while True:
-        batch = run_once(args.limit, engine, args.file)
+        batch = (run_queue(args.limit, tenant_id=args.tenant, lease_seconds=args.lease_seconds)
+                 if args.queue else run_once(args.limit, engine, args.file))
         if args.json:
             print(json.dumps(batch, ensure_ascii=False))
+        elif args.queue:
+            print(f"[worker] 队列本轮 compiled={batch['compiled']} cached={batch['cached']} "
+                  f"failed={batch['failed']} 队列快照={batch['queue']}")
         if args.once:
             return 1 if batch.get("failed") else 0
         time.sleep(interval)

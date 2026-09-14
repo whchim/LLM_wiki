@@ -534,27 +534,130 @@ def move_entry(old_path: str, new_path: str, status: str) -> None:
             (new_path, row[0], row[1], row[2], status, row[3], row[4], row[5]))
 
 
-# ---- 编译任务 ----
-def insert_compile_task(raw_path: str, fingerprint: str) -> int:
-    """插入 status='pending' 任务，返回 id。"""
+# ---- 编译任务（L2：可并发认领的工作队列）----
+TASK_TERMINAL = ("done", "failed", "cached")
+DEFAULT_LEASE_SECONDS = 600
+DEFAULT_MAX_ATTEMPTS = 3
+
+
+def insert_compile_task(raw_path: str, fingerprint: str, *,
+                        tenant_id: str = "default", priority: int = 100) -> int:
+    """入队一个 status='pending' 编译任务，返回 id（等价于 enqueue_compile_task）。"""
+    return enqueue_compile_task(raw_path, fingerprint, tenant_id=tenant_id, priority=priority)
+
+
+def enqueue_compile_task(raw_path: str, fingerprint: str, *,
+                         tenant_id: str = "default", priority: int = 100) -> int:
+    """入队：priority 越小越先被认领（交互式上传用 10，批量扫描用 100）。"""
     with get_conn() as conn:
         return conn.execute(
-            "INSERT INTO compile_tasks (raw_path, fingerprint, status, started_at) "
-            "VALUES (%s,%s,'pending',now()) RETURNING id",
-            (raw_path, fingerprint)).fetchone()[0]
+            "INSERT INTO compile_tasks (raw_path, fingerprint, status, tenant_id, priority, started_at) "
+            "VALUES (%s,%s,'pending',%s,%s,now()) RETURNING id",
+            (raw_path, fingerprint, tenant_id, priority)).fetchone()[0]
+
+
+def claim_compile_task(worker_id: str, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
+                       tenant_id: str | None = None,
+                       max_attempts: int = DEFAULT_MAX_ATTEMPTS) -> dict | None:
+    """认领下一个可执行任务（**并发安全**：FOR UPDATE SKIP LOCKED，多 worker 不会抢同一行）。
+
+    可认领 = `pending` 且退避已到（`next_retry_at` 为空或已过）**或** `processing` 但租约已过期
+    （worker 崩溃自愈），且 `attempts < max_attempts`。认领即 attempts+1 并设置租约。
+    返回任务行（含 raw_path/fingerprint/attempts/tenant_id），无可认领任务返回 None。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "UPDATE compile_tasks SET status='processing', "
+            "       lease_until = now() + make_interval(secs => %s), leased_by = %s, "
+            "       started_at = now(), attempts = attempts + 1, error_msg = NULL "
+            "WHERE id = ("
+            "  SELECT id FROM compile_tasks "
+            "  WHERE attempts < %s AND (%s::text IS NULL OR tenant_id = %s::text) "
+            "    AND ((status = 'pending' AND (next_retry_at IS NULL OR next_retry_at <= now())) "
+            "         OR (status = 'processing' AND (lease_until IS NULL OR lease_until < now()))) "
+            "  ORDER BY priority ASC, id ASC FOR UPDATE SKIP LOCKED LIMIT 1) "
+            "RETURNING id, raw_path, fingerprint, attempts, tenant_id, priority",
+            (lease_seconds, worker_id, max_attempts, tenant_id, tenant_id)).fetchone()
+    if row is None:
+        return None
+    keys = ("id", "raw_path", "fingerprint", "attempts", "tenant_id", "priority")
+    return dict(zip(keys, row))
+
+
+def finish_compile_task(task_id: int, status: str, *, nexus_path: str | None = None,
+                        error_msg: str | None = None,
+                        retry_backoff_seconds: int | None = None) -> None:
+    """收尾：终态（done/cached/failed）或**退避重排**（回 pending 等下次认领）。
+
+    `retry_backoff_seconds` 给定时表示"这次失败但还要再试"→ status=pending + next_retry_at；
+    不给定时按 `status` 落终态。认领时 attempts 已自增，故 attempts 用尽的任务不会被再认领。
+    """
+    with get_conn() as conn:
+        if retry_backoff_seconds is not None:
+            conn.execute(
+                "UPDATE compile_tasks SET status='pending', error_msg=%s, lease_until=NULL, leased_by=NULL, "
+                "       next_retry_at = now() + make_interval(secs => %s) WHERE id=%s",
+                (error_msg, max(1, retry_backoff_seconds), task_id))
+            return
+        conn.execute(
+            "UPDATE compile_tasks SET status=%s, nexus_path=COALESCE(%s,nexus_path), error_msg=%s, "
+            "       completed_at=now(), lease_until=NULL, leased_by=NULL, next_retry_at=NULL WHERE id=%s",
+            (status, nexus_path, error_msg, task_id))
+
+
+def requeue_compile_task(task_id: int) -> None:
+    """人工重试：把 failed 任务重置回 pending（清空退避与尝试次数），供 UI「重试」按钮用。"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE compile_tasks SET status='pending', attempts=0, next_retry_at=NULL, "
+            "       lease_until=NULL, leased_by=NULL, error_msg=NULL WHERE id=%s", (task_id,))
+
+
+def queue_stats(tenant_id: str | None = None) -> dict:
+    """队列观测：各状态任务数与最老待处理任务年龄（秒）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT status, count(*) FROM compile_tasks "
+            "WHERE (%s::text IS NULL OR tenant_id = %s::text) GROUP BY status",
+            (tenant_id, tenant_id)).fetchall()
+        oldest = conn.execute(
+            "SELECT COALESCE(EXTRACT(EPOCH FROM (now() - min(started_at))), 0) FROM compile_tasks "
+            "WHERE status IN ('pending','processing') AND (%s::text IS NULL OR tenant_id = %s::text)",
+            (tenant_id, tenant_id)).fetchone()[0]
+    stats = {status: count for status, count in rows}
+    stats["oldest_pending_seconds"] = int(float(oldest or 0))
+    return stats
 
 
 def update_compile_task(task_id: int, status: str,
                         nexus_path: str | None = None,
                         error_msg: str | None = None) -> None:
-    """更新任务状态与完成时间。"""
+    """兼容旧调用方的状态更新（终态走 finish_compile_task 语义）。"""
+    if status in TASK_TERMINAL:
+        finish_compile_task(task_id, status, nexus_path=nexus_path, error_msg=error_msg)
+        return
     with get_conn() as conn:
-        if status in ("done", "failed", "cached"):
-            conn.execute(
-                "UPDATE compile_tasks SET status=%s, nexus_path=COALESCE(%s,nexus_path), error_msg=%s, completed_at=now() WHERE id=%s",
-                (status, nexus_path, error_msg, task_id))
-        else:
-            conn.execute("UPDATE compile_tasks SET status=%s WHERE id=%s", (status, task_id))
+        conn.execute("UPDATE compile_tasks SET status=%s WHERE id=%s", (status, task_id))
+
+
+def find_done_compile_task(raw_path: str, fingerprint: str,
+                           exclude_id: int | None = None) -> dict | None:
+    """同路径 + 同指纹的已完成（done/cached）任务——**队列模式下的去重判据**。
+
+    为什么需要它：队列里同一个文件可能被重复入队（上传 / 批量扫描 / 人工重试），
+    每个任务行的 `latest_compile_task` 只看到"自己是最新的 pending"，会漏掉历史 done 记录，
+    于是重复编译并产出 `xxx-2.md` 这类重复条目（实测问题）。
+    `exclude_id` 用于排除"当前正在处理的这一行"。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, raw_path, nexus_path, status, fingerprint FROM compile_tasks "
+            "WHERE raw_path=%s AND fingerprint=%s AND status IN ('done','cached') "
+            "  AND (%s::int IS NULL OR id <> %s::int) "
+            "ORDER BY id DESC LIMIT 1", (raw_path, fingerprint, exclude_id, exclude_id)).fetchone()
+    if row is None:
+        return None
+    return dict(zip(("id", "raw_path", "nexus_path", "status", "fingerprint"), row))
 
 
 def latest_compile_task(raw_path: str) -> dict | None:
@@ -606,6 +709,20 @@ def resubmit_review(review_id: int) -> None:
         conn.execute(
             "UPDATE pending_reviews SET human_decision=NULL, reject_reason=NULL WHERE id=%s",
             (review_id,))
+
+
+def find_review(nexus_path: str) -> dict | None:
+    """某条目路径的最新审核记录（审核幂等判据：已有 ai_scores 就不重审）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, nexus_path, submitter, department, ai_verdict, ai_scores, "
+            "human_decision, reject_reason, created_at FROM pending_reviews "
+            "WHERE nexus_path=%s ORDER BY id DESC LIMIT 1", (nexus_path,)).fetchone()
+    if row is None:
+        return None
+    keys = ("id", "nexus_path", "submitter", "department", "ai_verdict", "ai_scores",
+            "human_decision", "reject_reason", "created_at")
+    return dict(zip(keys, row))
 
 
 def list_pending_reviews() -> list[dict]:
