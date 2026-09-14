@@ -167,6 +167,8 @@ CREATE TABLE IF NOT EXISTS evidence (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_conversation ON evidence(conversation_id);
+-- 内容级幂等（防"同一份纪要重复提交生成多条会话"）：按正文指纹找同客户的历史洽谈
+CREATE INDEX IF NOT EXISTS idx_evidence_content_hash ON evidence(content_hash);
 
 -- Sales clarification Agent（阶段 4）：有限轮次的澄清会话，原始证据不可变
 CREATE TABLE IF NOT EXISTS clarification_sessions (

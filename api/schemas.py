@@ -97,6 +97,8 @@ class SalesIntakeRequest(BaseModel):
 
     customer_alias：可选，内部中文简称。给了它就以别名绑定的 customer_id 为准，
     前端因此不必自己知道代号；别名未登记/对应多个客户时明确报错，不做猜测。
+    force_new：可选，同一客户同一份正文默认复用已有洽谈（防重复提交堆会话）；
+    确实要再建一次洽谈时显式传 true。
     """
     idempotency_key: str
     customer_id: str = ""
@@ -105,6 +107,7 @@ class SalesIntakeRequest(BaseModel):
     source_type: str = "meeting_note"
     source_ref: str | None = None
     customer_alias: str | None = None
+    force_new: bool = False
 
 
 class ClarificationAnswerRequest(BaseModel):

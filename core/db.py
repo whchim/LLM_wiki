@@ -157,6 +157,29 @@ def get_conversation_by_idempotency_key(idempotency_key: str) -> dict | None:
     return dict(zip(keys, row))
 
 
+def find_duplicate_intake(customer_id: str, content_hash: str) -> dict | None:
+    """内容级幂等判据：同一客户 + 相同正文指纹（sha256）的最近一次洽谈。
+
+    背景（实测问题）：前端每次读文件都会换一个 `idempotency_key`，所以幂等键只能防"同一个键重放"，
+    防不了"同一份纪要再提交一次"——结果同一个客户堆出多条看起来一模一样的会话。
+    这里按内容指纹兜住重复提交；`archived` 标记已归档记录（归档的不复用，否则会把人引回已归档会话）。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT c.conversation_id, c.idempotency_key, c.source_ref, c.submitted_by, c.created_at, "
+            "s.session_id, (s.deleted_at IS NOT NULL) "
+            "FROM conversations c "
+            "JOIN evidence e ON e.conversation_id=c.conversation_id "
+            "LEFT JOIN clarification_sessions s ON s.conversation_id=c.conversation_id "
+            "WHERE c.customer_id=%s AND e.content_hash=%s "
+            "ORDER BY c.created_at DESC LIMIT 1", (customer_id, content_hash)).fetchone()
+    if row is None:
+        return None
+    return {"conversation_id": row[0], "idempotency_key": row[1], "source_ref": row[2],
+            "submitted_by": row[3], "submitted_at": row[4], "session_id": row[5],
+            "archived": bool(row[6])}
+
+
 def latest_evidence(conversation_id: str) -> dict | None:
     """返回最近一条脱敏证据，供幂等提交响应展示。"""
     with get_conn() as conn:
@@ -402,14 +425,43 @@ def list_user_clarification_sessions(username: str, limit: int = 100,
         rows = conn.execute(
             "SELECT s.session_id, s.conversation_id, c.customer_id, s.status, s.round_count, "
             "s.max_rounds, s.created_by, s.created_at, s.updated_at, s.resolution_note, s.resolved_by, "
-            "s.deleted_at, s.deleted_by "
+            "s.deleted_at, s.deleted_by, "
+            # 列表要能分辨"同一客户的多次洽谈"：给一行摘要（正文前 400 字，Python 侧清洗成可读版）
+            # + 来源文件名。
+            "(SELECT left(e.content_redacted, 400) FROM evidence e "
+            " WHERE e.conversation_id=s.conversation_id ORDER BY e.created_at DESC LIMIT 1), "
+            "(SELECT e.source_ref FROM evidence e WHERE e.conversation_id=s.conversation_id "
+            " ORDER BY e.created_at DESC LIMIT 1) "
             "FROM clarification_sessions s JOIN conversations c ON c.conversation_id=s.conversation_id "
             "WHERE s.created_by=%s AND (%s OR s.deleted_at IS NULL) "
             "ORDER BY s.updated_at DESC LIMIT %s", (username, include_deleted, limit)).fetchall()
     keys = ("session_id", "conversation_id", "customer_id", "status", "round_count", "max_rounds",
             "created_by", "created_at", "updated_at", "resolution_note", "resolved_by",
-            "deleted_at", "deleted_by")
-    return [dict(zip(keys, row)) for row in rows]
+            "deleted_at", "deleted_by", "content_preview", "source_ref")
+    out = []
+    for row in rows:
+        item = dict(zip(keys, row))
+        item["content_preview"] = _preview_text(item.get("content_preview"))
+        out.append(item)
+    return out
+
+
+_PREVIEW_MARKERS = re.compile(r"^\s*[#*>\-]+\s*|\*\*")
+_PREVIEW_REF = re.compile(r"\[[A-Z_]+_REF:nv-[0-9a-f]+\]")
+
+
+def _preview_text(text: str | None, limit: int = 80) -> str | None:
+    """列表摘要清洗：正文是 Markdown 纪要（`# **标题**`），列表里只留可读文字。
+
+    敏感数值占位符（`[AMOUNT_REF:nv-xxx]`）对销售是技术噪音——精确值本来就不该出现在列表，
+    这里统一换成「【数值已隐藏】」，与工作台"技术细节按需展开"的口径一致。
+    """
+    if not text:
+        return text
+    cleaned = _PREVIEW_REF.sub("【数值已隐藏】", text)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = _PREVIEW_MARKERS.sub("", cleaned).strip()
+    return cleaned[:limit] or None
 
 
 def clarification_context(session_id: str) -> dict:

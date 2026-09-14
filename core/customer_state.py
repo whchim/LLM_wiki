@@ -87,20 +87,24 @@ def create_conversation(customer_id: str, idempotency_key: str,
 
 
 def add_evidence(conversation_id: str, content_redacted: str,
-                 source_ref: str | None = None) -> dict:
-    """追加不可变脱敏证据，内容哈希用于回放和完整性检查。"""
+                 source_ref: str | None = None, content_hash: str | None = None) -> dict:
+    """追加不可变脱敏证据，内容哈希用于回放、完整性检查与内容级幂等（防重复提交）。
+
+    `content_hash` 由调用方传入时以传入值为准：它必须是**数值加密之前**的正文指纹，
+    否则同一份纪要每次提交都会因随机密文/占位符 id 得到不同指纹，去重就形同虚设。
+    """
     if not content_redacted.strip():
         raise ValueError("脱敏证据不能为空")
     evidence_id = _id("ev")
-    content_hash = hashlib.sha256(content_redacted.encode("utf-8")).hexdigest()
+    fingerprint = content_hash or hashlib.sha256(content_redacted.encode("utf-8")).hexdigest()
     with db.get_conn() as conn:
         # 证据、建议和决定分开落库：Agent 可以写建议，但不能绕过负责人直接改变业务事实。
         conn.execute(
             "INSERT INTO evidence (evidence_id, conversation_id, content_redacted, content_hash, source_ref) "
             "VALUES (%s,%s,%s,%s,%s)",
-            (evidence_id, conversation_id, content_redacted, content_hash, source_ref))
+            (evidence_id, conversation_id, content_redacted, fingerprint, source_ref))
     return {"evidence_id": evidence_id, "conversation_id": conversation_id,
-            "content_hash": content_hash}
+            "content_hash": fingerprint}
 
 
 def add_sensitive_numeric(evidence_id: str, field_type: str, ciphertext: str,

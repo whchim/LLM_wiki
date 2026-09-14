@@ -22,7 +22,12 @@ router = APIRouter(prefix="/clarifications", tags=["clarification"])
 def intake(body: SalesIntakeRequest, request: Request,
            user: auth.User = Depends(auth.get_current_user),
            _trace: auth.User = Depends(trace_mod.trace("sales_intake"))):
-    """销售提交一次脱敏纪要；只创建证据和澄清会话，不调用模型或改状态。"""
+    """销售提交一次脱敏纪要；只创建证据和澄清会话，不调用模型或改状态。
+
+    **内容级幂等**：同一客户 + 完全相同正文（sha256 指纹）的历史洽谈会直接复用，
+    响应带 `duplicate`（原因/原会话/原提交时间）——前端据此提示"这份纪要提交过"，
+    不再堆出多条看起来一模一样的会话；确实要再建一次洽谈时传 `force_new=true`。
+    """
     # 别名解析先于门禁：别名只是"选择入口"，解析出的代号仍要过 customer_id 的格式与敏感检查
     customer_id = body.customer_id.strip()
     resolved_from_alias = None
@@ -56,6 +61,7 @@ def intake(body: SalesIntakeRequest, request: Request,
                                                        "risk_flags": prepared["risk_flags"]})
     normalized = prepared["normalized"]
     try:
+        duplicate = None
         conversation = db.get_conversation_by_idempotency_key(normalized["idempotency_key"])
         if conversation is not None:
             if conversation["customer_id"] != normalized["customer_id"]:
@@ -63,19 +69,36 @@ def intake(body: SalesIntakeRequest, request: Request,
             if user.role not in {"reviewer", "admin"} and not db.can_access_conversation(conversation["conversation_id"], user.username):
                 raise HTTPException(status_code=403, detail="无权重复提交该销售纪要")
         else:
-            conversation = customer_state.create_conversation(
-                customer_id=normalized["customer_id"], idempotency_key=normalized["idempotency_key"],
-                source_type=normalized["source_type"], occurred_at=normalized["occurred_at"],
-                submitted_by=user.username, source_ref=normalized.get("source_ref"), owner_user_id=user.username)
+            # 内容级幂等：同一份纪要重复提交（前端每次读文件都会换幂等键）不应堆出多条会话。
+            # 只复用自己提交的（或审核角色可见的）记录，避免"内容相同"变成越权读取他人会话；
+            # 已归档的记录不复用——否则会把人引回已归档会话。`force_new` 显式要求新建时跳过。
+            if not body.force_new:
+                prior = db.find_duplicate_intake(normalized["customer_id"], normalized["content_hash"])
+                if (prior is not None and not prior["archived"]
+                        and (prior["submitted_by"] == user.username or user.role in {"reviewer", "admin"})):
+                    conversation = db.get_conversation_by_idempotency_key(prior["idempotency_key"])
+                    duplicate = {"reason": "same_content", "conversation_id": prior["conversation_id"],
+                                 "session_id": prior["session_id"], "source_ref": prior["source_ref"],
+                                 "submitted_at": prior["submitted_at"]}
+            if conversation is None:
+                conversation = customer_state.create_conversation(
+                    customer_id=normalized["customer_id"], idempotency_key=normalized["idempotency_key"],
+                    source_type=normalized["source_type"], occurred_at=normalized["occurred_at"],
+                    submitted_by=user.username, source_ref=normalized.get("source_ref"), owner_user_id=user.username)
         existing_session = db.get_clarification_session_for_conversation(conversation["conversation_id"])
         if existing_session is not None:
             evidence = db.latest_evidence(conversation["conversation_id"])
             audit_log(user.username, "sales_intake", target_path=existing_session["session_id"],
-                      detail={"idempotent_replay": True, "conversation_id": conversation["conversation_id"]})
+                      detail={"idempotent_replay": duplicate is None,
+                              "duplicate_reason": (duplicate or {}).get("reason"),
+                              "conversation_id": conversation["conversation_id"]})
             return {"conversation": conversation, "evidence": evidence, "session": existing_session,
-                    "gate": {"risk_flags": prepared["risk_flags"], "numeric_ref_count": 0, "idempotent_replay": True}}
+                    "duplicate": duplicate,
+                    "gate": {"risk_flags": prepared["risk_flags"], "numeric_ref_count": 0,
+                             "idempotent_replay": duplicate is None}}
         evidence = customer_state.add_evidence(
-            conversation["conversation_id"], normalized["content_redacted"], normalized.get("source_ref"))
+            conversation["conversation_id"], normalized["content_redacted"], normalized.get("source_ref"),
+            content_hash=normalized["content_hash"])   # 数值加密前的指纹：重复提交判据（见 SA-01 §9.1）
         # 密文与粗区间落受限表：Agent/检索/日志只见到占位符与区间，精确值需授权才可解密
         for ref in prepared["numeric_refs"]:
             if not ref.get("ciphertext"):
@@ -91,6 +114,7 @@ def intake(body: SalesIntakeRequest, request: Request,
                       "numeric_ref_count": len(prepared["numeric_refs"])})
     request.state.trace_detail = {"operation": "sales_intake", "session_id": session["session_id"]}
     return {"conversation": conversation, "evidence": evidence, "session": session,
+            "duplicate": None,          # 正常新建时为 None；内容重复时带原因（见上面的分支）
             "alias": body.customer_alias.strip() if body.customer_alias and body.customer_alias.strip() else None,
             "resolved_customer_id": resolved_from_alias,
             "gate": {"risk_flags": prepared["risk_flags"], "numeric_ref_count": len(prepared["numeric_refs"])}}

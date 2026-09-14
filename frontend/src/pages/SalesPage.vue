@@ -39,6 +39,8 @@ const drafts = ref({})
 const fileInput = ref(null)
 const importedFile = ref(null)
 const fileError = ref('')
+/** 同一份纪要重复提交的提示（含原会话与"仍要新建"入口） */
+const duplicateHint = ref(null)
 
 const form = ref({
   customer_id: '', customer_alias: null, idempotency_key: '', occurred_at: nowLocal(),
@@ -282,27 +284,50 @@ function clearFile() {
   fileError.value = ''
 }
 
-async function submit() {
+async function submit(forceNew = false) {
   if (!form.value.customer_id.trim() || !form.value.content.trim()) {
     ElMessage.warning('请填写客户标识与纪要正文')
     return
   }
   if (!form.value.idempotency_key.trim()) form.value.idempotency_key = `ui-${uid()}`
   loading.value = true
+  duplicateHint.value = null
+  let openAfter = null
   startBusy('正在提交纪要并创建澄清会话…')
   try {
-    await api.intake({ ...form.value, occurred_at: new Date(form.value.occurred_at).toISOString() })
-    ElMessage.success('纪要已通过门禁并创建澄清会话')
-    form.value.content = ''
-    form.value.idempotency_key = ''
-    importedFile.value = null
-    await load()
+    const res = await api.intake({
+      ...form.value, occurred_at: new Date(form.value.occurred_at).toISOString(), force_new: forceNew,
+    })
+    if (res?.duplicate) {
+      // 同一份正文已经提交过：后端复用原洽谈，不新建会话——必须说清楚"为什么没有新会话"
+      const d = res.duplicate
+      duplicateHint.value = {
+        sessionId: d.session_id, submittedAt: fmtTime(d.submitted_at), sourceRef: d.source_ref,
+      }
+      ElMessage.warning(`这份纪要已于 ${fmtTime(d.submitted_at)} 提交过（内容完全相同），已为你打开原会话`)
+      await load()
+      openAfter = d.session_id || null
+    } else {
+      ElMessage.success('纪要已通过门禁并创建澄清会话')
+      duplicateHint.value = null
+      form.value.content = ''
+      form.value.idempotency_key = ''
+      importedFile.value = null
+      await load()
+    }
   } catch (err) {
     ElMessage.error(err instanceof ApiError ? err.message : '提交失败')
   } finally {
     loading.value = false
     stopBusy()
   }
+  // 打开会话要放在 stopBusy 之后：openSession 在"有任务进行中"时会直接返回（防重复推进）
+  if (openAfter) await openSession({ session_id: openAfter })
+}
+
+/** 重复提交提示里的"仍要新建"：显式 force_new 再提交一次（保留表单内容，不让人重填） */
+async function submitAnyway() {
+  await submit(true)
 }
 
 async function sendAnswer(turn, question) {
@@ -381,6 +406,33 @@ function roundLabel(s) {
 
 const confidence = (row) => Math.round(Number(row?.confidence || 0) * 100)
 const stateName = (s) => STATE_LABELS[s] || s || '未确认'
+
+/** 时间展示：列表要能区分同一客户的多次洽谈，时间必须可见 */
+function fmtTime(value) {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** 同一客户第几次洽谈：一个客户多次洽谈是正常的（新洽谈=新会话），列表必须说清楚而不是看着像重复 */
+const customerRounds = computed(() => {
+  const byCustomer = {}
+  ;[...sessions.value]
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .forEach((s) => {
+      byCustomer[s.customer_id] = byCustomer[s.customer_id] || { total: 0, index: {} }
+      byCustomer[s.customer_id].total += 1
+      byCustomer[s.customer_id].index[s.session_id] = byCustomer[s.customer_id].total
+    })
+  return byCustomer
+})
+function customerRoundLabel(row) {
+  const hit = customerRounds.value[row.customer_id]
+  if (!hit || hit.total < 2) return ''
+  return `第 ${hit.index[row.session_id]} 次洽谈`
+}
 
 /** 会话状态中文：cancelled 需结合处置信息区分"人工处置后关闭"与"作废"，不能一律叫"已取消" */
 function sessionStatusLabel(s) {
@@ -563,7 +615,21 @@ onMounted(() => { load(); loadAliases() })
           <el-alert type="info" show-icon :closable="false" class="mb"
                     title="提交前自动检查敏感信息、Prompt injection 与数字隔离；精确数值不会进入 Agent 上下文。" />
 
-          <el-button type="primary" :loading="loading" class="full" @click="submit">提交并进入澄清</el-button>
+          <el-button type="primary" :loading="loading" class="full" @click="submit()">提交并进入澄清</el-button>
+
+          <el-alert v-if="duplicateHint" type="warning" show-icon :closable="false" class="mb">
+            <template #title>
+              这份纪要已于 {{ duplicateHint.submittedAt }} 提交过，内容完全相同——已为你打开原会话，没有重复新建
+            </template>
+            <div class="dup-body">
+              <span v-if="duplicateHint.sourceRef" class="muted">来源：{{ duplicateHint.sourceRef }}</span>
+              <span class="muted">原会话：{{ duplicateHint.sessionId }}</span>
+              <span class="muted">如果这确实是一次新的洽谈，点右边按钮；否则不用再操作。</span>
+              <el-button size="small" text type="primary" :disabled="loading" @click="submitAnyway">
+                这确实是一次新洽谈，仍要新建
+              </el-button>
+            </div>
+          </el-alert>
 
           <el-collapse class="alias-manage">
             <el-collapse-item :title="`已登记的客户简称（${aliases.length}）`" name="alias">
@@ -602,8 +668,25 @@ onMounted(() => { load(); loadAliases() })
           <el-empty v-if="!loading && !sessions.length" description="还没有会话" :image-size="80" />
 
           <el-table v-else v-loading="loading" :data="sessions" highlight-current-row size="small" @row-click="openSession">
-            <el-table-column prop="customer_id" label="客户" min-width="140" />
-            <el-table-column label="状态" width="120">
+            <el-table-column label="客户" min-width="140">
+              <template #default="{ row }">
+                <div>{{ row.customer_id }}</div>
+                <el-tag v-if="customerRoundLabel(row)" size="small" type="info" effect="plain">
+                  {{ customerRoundLabel(row) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="纪要摘要" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.content_preview">{{ row.content_preview }}</span>
+                <span v-else class="muted">（无正文摘要）</span>
+                <div v-if="row.source_ref" class="muted src-line">来源：{{ row.source_ref }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="提交时间" width="130">
+              <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="110">
               <template #default="{ row }">
                 <el-tag v-if="row.deleted_at" type="info" size="small">已归档</el-tag>
                 <el-tag v-else :type="statusTag(row.status)" size="small">
@@ -611,18 +694,21 @@ onMounted(() => { load(); loadAliases() })
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column v-if="showArchived && props.isAdmin" label="操作" width="90">
+            <el-table-column label="轮次" width="140">
+              <template #default="{ row }">{{ roundLabel(row) }}</template>
+            </el-table-column>
+            <el-table-column v-if="showArchived && props.isAdmin" label="操作" width="80">
               <template #default="{ row }">
                 <el-button v-if="row.deleted_at" size="small" text type="primary"
                            @click.stop="restoreArchived(row)">恢复</el-button>
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="轮次" width="150">
-              <template #default="{ row }">{{ roundLabel(row) }}</template>
-            </el-table-column>
-            <el-table-column prop="session_id" label="会话 ID" min-width="180" show-overflow-tooltip />
           </el-table>
+          <p class="muted list-note">
+            同一客户可以有多条记录：一次洽谈 = 一个会话（上表按最近更新排序，可看「第 N 次洽谈」）。
+            同一份纪要重复提交会被自动拦下并复用原会话；确实要再建一次洽谈，用提交提示里的「确实要再建一次洽谈」。
+          </p>
         </el-card>
 
         <el-card v-if="selected" shadow="never" class="detail-card">
@@ -783,4 +869,7 @@ onMounted(() => { load(); loadAliases() })
   border-radius: 8px;
 }
 :deep(.el-table__row) { cursor: pointer; }
+.src-line { margin-top: 2px; }
+.list-note { margin: 10px 0 0; line-height: 1.6; }
+.dup-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
 </style>

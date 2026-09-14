@@ -147,21 +147,28 @@ def admin_headers(client):
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def _intake(client, headers, key: str, customer: str) -> dict:
+def _intake(client, headers, key: str, customer: str, content: str = CONTENT) -> dict:
+    """提交一次洽谈。
+
+    注意：同一客户 + **完全相同正文**会被内容级幂等复用（防重复提交），
+    所以测试里"同一客户的多次洽谈"必须给不同的正文（现实中每次洽谈本来就不是同一份纪要）。
+    """
     response = client.post("/clarifications/intake", headers=headers, json={
-        "idempotency_key": key, "customer_id": customer, "content": CONTENT,
+        "idempotency_key": key, "customer_id": customer, "content": content,
         "occurred_at": datetime.now(timezone.utc).isoformat(), "source_type": "meeting_note",
     })
     assert response.status_code == 200, response.text
     body = response.json()
+    assert body["duplicate"] is None, "测试用的多次洽谈不应被判为重复提交（请给不同正文）"
     return {"session_id": body["session"]["session_id"], "customer_id": customer,
             "conversation_id": body["conversation"]["conversation_id"]}
 
 
-def _ready(client, headers, key: str, customer: str, claims: list[dict]) -> dict:
+def _ready(client, headers, key: str, customer: str, claims: list[dict],
+           content: str = CONTENT) -> dict:
     """建一条 ready_for_proposal 会话，claims 决定规则能否自行判定。"""
     import db
-    ctx = _intake(client, headers, key, customer)
+    ctx = _intake(client, headers, key, customer, content)
     output = {"schema_version": "clarification.v1", "claims": claims, "missing_facts": [],
               "questions": [], "stop_reason": "ready_for_proposal", "can_propose": True,
               "model_version": "test-model", "prompt_version": "v1"}
@@ -178,10 +185,14 @@ def _set_current_state(client, headers, customer: str, target: str = "contacted"
     """走正常链路（生成建议 → 负责人确认）把客户推进到 target。
 
     歧义场景需要"当前已有阶段"才成立：无阶段时规则总能判定 new_lead，轮不到模型复核。
+    每次推进用的是**不同的洽谈纪要**（同一客户可以有多次洽谈）。
     """
-    plan = [("a", [], "new_lead"), ("b", [_claim("客户正在做技术评估")], "contacted")]
-    for suffix, claims, expected in plan:
-        ctx = _ready(client, headers, f"prime-{suffix}-{customer}", customer, claims)
+    plan = [
+        ("a", "首次电话沟通，客户要了产品介绍。", [], "new_lead"),
+        ("b", "第二次沟通，客户正在做技术评估。", [_claim("客户正在做技术评估", quote="客户正在做技术评估")], "contacted"),
+    ]
+    for suffix, content, claims, expected in plan:
+        ctx = _ready(client, headers, f"prime-{suffix}-{customer}", customer, claims, content)
         proposal_id = client.post(f"/clarifications/sessions/{ctx['session_id']}/proposal",
                                   headers=headers, params={"mode": "rules"}).json()["proposal_id"]
         decided = client.post(f"/customer-states/proposals/{proposal_id}/decision", headers=headers,

@@ -214,7 +214,12 @@ def preprocess_sales_input(payload: Mapping[str, Any], *, now: datetime | None =
             "source_type": source_type,
             "source_ref": payload.get("source_ref"),
             "language": "zh-CN",
-            "content_hash": hashlib.sha256(redacted_content.encode("utf-8")).hexdigest(),
+            # 内容指纹必须**在数值加密之前**算：加密为同一数值生成随机 nonce 与新占位符 id，
+            # 用加密后的正文算指纹会导致"同一份纪要再提交一次指纹就变了"——实测后果是
+            # 同一个客户堆出多条一模一样的澄清会话（销售看到的就是"重复"）。
+            # 归一空白只是为了让排版差异（多空格/换行）不至于被当成新内容。
+            "content_hash": hashlib.sha256(
+                re.sub(r"\s+", " ", content).strip().encode("utf-8")).hexdigest(),
         }
     return {
         "accepted": accepted,
