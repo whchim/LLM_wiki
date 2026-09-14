@@ -154,12 +154,36 @@ L1 只解决"引擎能进容器"。要在云端做多租户，还差三层：
 
 > 仍未做：Stalled 任务的定时巡检（目前靠"下次认领时租约已过期"自愈）、跨机时钟漂移（同一 PG 时钟，暂无风险）。
 
-### L3 多租户隔离
+### L3 多租户隔离 —— ✅ 已实现
 
-- 全表加 `tenant_id` + Postgres **RLS**；JWT 带 tenant claim，API 层统一注入租户过滤（不靠调用方自觉）
-- 文件分区：`vault/tenants/<tenant_id>/{RAW,pending_review,NEXUS}/…`（或对象存储前缀）；
-  检索、指纹缓存、幂等键、审计、trace 全部带租户维度
-- 现有 `KB_ROOT` 作为**进程级根**保留（本地开发/单租户部署），多租户时在其下加租户层
+**目标**：租户边界由**数据库**强制，而不是靠应用自觉。
+
+| 层 | 做法 |
+|---|---|
+| 数据 | 21 张业务表 + `users` 全部加 `tenant_id`；**默认值动态取当前租户** `current_setting('app.tenant_id')`——应用代码里的 INSERT 不必逐个改写就自动落在当前租户（历史行回填 `default`） |
+| 隔离 | 每张表 `ENABLE` + **`FORCE ROW LEVEL SECURITY`**，策略 `USING/WITH CHECK (tenant_id = current_setting('app.tenant_id', true))`：跨租户**读不可见、写被拒** |
+| 上下文 | `core/db.get_conn()` 每次 checkout 注入 `app.tenant_id`（连接池复用，必须每次重设）；后台 worker/脚本用 `db.bind_tenant()` |
+| 请求 | JWT 增加 `tenant` claim（登录时取自 `users.tenant_id`）；**HTTP 中间件**（`api/main.py::request_context`）按 claim 绑定租户 + trace_id |
+
+#### 三个实测踩到的关键点（都已写进代码注释与测试）
+
+1. **超级用户绕过 RLS**：Docker 官方镜像的 `POSTGRES_USER`（本项目 `llmwiki`）是超级用户，
+   `rolbypassrls=t`——只加策略不做角色分离，**本地"看起来配好了"其实隔离是失效的**。
+   解决：新增受限角色 `llmwiki_app`（`docker/initdb/20-app-role`，`NOSUPERUSER` + 只给 DML 权限），
+   应用以它连接；测试里专门用受限角色连接来验收 RLS，缺角色时**明确 skip 而不是假绿**。
+2. **租户绑定必须写在中间件，不能写在 FastAPI 依赖**：同步依赖与同步端点各自在线程池里执行，
+   `contextvars` 的修改**不会互相传递**（依赖里 set 的变量端点读不到）。
+   中间件在事件循环里、`call_next` 之前设置，各线程池调用会复制当前上下文。
+   同一个坑此前也影响了 Langfuse 的 trace_id 关联（上一版写在 trace 依赖里），一并修到中间件。
+3. **默认值 fail-closed**：`current_setting('app.tenant_id', true)` 未设置时是 `NULL`，
+   被 `NOT NULL` 拦下（迁移工具用裸连接时就撞上了）——失败得很响，好过静默写进错租户。
+   任何不走 `db.get_conn()` 的连接都要自己 `set_config`。
+4. **`users` 表豁免 RLS**：登录发生在"还不知道租户"之前，按用户名查身份必须跨租户可见；
+   用户归属由 `users.tenant_id` 在应用层判定（token 里的 tenant 不参与鉴权，只确定数据边界）。
+
+> 未做：**文件分区**（`vault/tenants/<id>/…`）。当前 `KB_ROOT` 仍是进程级根，多租户部署时
+> 每租户一个 worker + 一份挂载即可；若要单实例服务多租户，需要把 compile/review 服务的路径解析
+> 接到租户（设计见 §5.4 待补）。JWT 里的 tenant 在用户被迁移租户后会短暂过期（需重新登录）。
 
 ### L4 模型配置进库（当前是进程级单例）
 
@@ -247,3 +271,13 @@ DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变
    终态不可再认领、人工 requeue、重复入队不重复编译、上传入队不写纸条）。③ 真机暴露并修掉
    "队列模式重复编译产出 `-2` 重复条目"（`db.find_done_compile_task`，复验重放 0 token）。
    ④ 完整演示动线跑通：编译 → 审核 → 人工放行 → 浏览/检索（详见 §6）。
+- **v0.3（2026-09-14）**：**L3 多租户隔离落地**（数据库强制，不靠应用自觉）。① 21 张业务表 + `users` 加
+   `tenant_id`，默认值**动态取当前租户** `current_setting('app.tenant_id')`；每表 `ENABLE`+`FORCE ROW LEVEL SECURITY`，
+   策略 `USING/WITH CHECK` 保证跨租户读不可见、写被拒；② 上下文注入：`db.get_conn()` 每次 checkout 设
+   `app.tenant_id`（连接池复用必须每次重设）、`db.bind_tenant()` 供 worker/脚本使用；③ JWT 增加 `tenant` claim，
+   **HTTP 中间件**（`api/main.py::request_context`）按 claim 绑定租户 + trace_id；④ 新增受限角色
+   `llmwiki_app`（`docker/initdb/20-app-role`）——实测发现 Docker 默认 POSTGRES_USER 是超级用户、会**绕过 RLS**，
+   只加策略不做角色分离等于假隔离；⑤ 修掉"同步依赖绑定 contextvar 传不到同步端点"的坑（同时修好 Langfuse
+   trace_id 关联）；⑥ 修掉队列原语把租户写死 'default' 的 bug（单测抓到）；⑦ 迁移工具的裸连接需自设租户
+   （默认值 NULL 被 NOT NULL 拦下，fail-closed）。新增 `tests/test_tenant_isolation.py`（应用层上下文 + 受限角色
+   下的 RLS 读写隔离，缺角色时明确 skip）。

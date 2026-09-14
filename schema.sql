@@ -311,3 +311,50 @@ CREATE TABLE IF NOT EXISTS sensitive_numeric_values (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_sensitive_numeric_evidence ON sensitive_numeric_values(evidence_id);
+
+-- ============================================================
+-- L3 多租户隔离（幂等）：全表 tenant_id + PostgreSQL RLS
+-- ------------------------------------------------------------
+-- 设计（详见 docs/WIKI-70 §5 L3）：
+--   · 每张业务表加 tenant_id，**默认值动态取当前租户** `current_setting('app.tenant_id')`——
+--     这样应用代码里的 INSERT 不必逐个改写就自动落在当前租户，历史行回填 'default'；
+--   · 启用 **FORCE ROW LEVEL SECURITY**：连表 owner 也受策略约束；
+--   · 策略 = tenant_id 必须等于会话变量 app.tenant_id（`core/db.get_conn` 每次 checkout 注入，
+--     HTTP 请求由中间件按 JWT 的 tenant claim 绑定），USING 管读、WITH CHECK 管写
+--     ——跨租户读写由**数据库**拒绝，不靠应用自觉；
+--   · **RLS 只对非超级用户生效**：Docker 默认的 POSTGRES_USER 是超级用户，会绕过 RLS，
+--     因此生产/验收要用受限角色（见 docker/initdb/20-app-role，测试见 test_tenant_isolation.py）；
+--   · **users 表豁免 RLS**：登录发生在"还不知道租户"之前，按用户名查身份必须跨租户可见，
+--     用户归属由 users.tenant_id 在应用层判定。
+-- ============================================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+ALTER TABLE users ALTER COLUMN tenant_id SET DEFAULT current_setting('app.tenant_id', true);
+UPDATE users SET tenant_id = 'default' WHERE tenant_id IS NULL;
+ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL;
+
+DO $$
+DECLARE t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'knowledge_entries','compile_tasks','pending_reviews','search_logs','audit_logs',
+    'contributors','conflicts','customer_aliases','trace_events','health_reports',
+    'customers','conversations','evidence','clarification_sessions','clarification_turns',
+    'clarification_answers','state_proposals','state_decisions','state_events',
+    'current_states','sensitive_numeric_values'
+  ]
+  LOOP
+    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS tenant_id TEXT', t);
+    -- 默认值动态取当前租户：INSERT 不写 tenant_id 也会落在正确租户
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN tenant_id SET DEFAULT current_setting(''app.tenant_id'', true)', t);
+    EXECUTE format('UPDATE %I SET tenant_id = %L WHERE tenant_id IS NULL', t, 'default');
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN tenant_id SET NOT NULL', t);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%s_tenant ON %I(tenant_id)', t, t);
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t);
+    EXECUTE format(
+      'CREATE POLICY tenant_isolation ON %I '
+      'USING (tenant_id = current_setting(''app.tenant_id'', true)) '
+      'WITH CHECK (tenant_id = current_setting(''app.tenant_id'', true))', t);
+  END LOOP;
+END $$;

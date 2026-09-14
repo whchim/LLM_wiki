@@ -26,6 +26,7 @@ class User(BaseModel):
     username: str
     role: str
     display_name: str | None = None
+    tenant_id: str = "default"
 
 
 # ---- 密码哈希 ----
@@ -64,12 +65,18 @@ def ensure_ready() -> None:
             raise RuntimeError("生产环境 JWT_SECRET 必须至少 32 个字符且不能使用开发默认值")
 
 
-def create_access_token(username: str, role: str, expires_h: int = TOKEN_TTL_HOURS) -> str:
-    """签发 JWT：payload 含 sub(用户名)、role、exp(过期时间戳)。"""
+def create_access_token(username: str, role: str, tenant: str = "default",
+                        expires_h: int = TOKEN_TTL_HOURS) -> str:
+    """签发 JWT：payload 含 sub(用户名)、role、tenant(租户)、exp(过期时间戳)。
+
+    `tenant` 来自 users.tenant_id（登录时读取）。中间件据此绑定请求租户，
+    由 Postgres RLS 强制隔离——**token 里的租户不参与鉴权**，只用于确定数据边界。
+    """
     ensure_ready()
     payload = {
         "sub": username,
         "role": role,
+        "tenant": tenant or "default",
         "exp": int(time.time()) + expires_h * 3600,
         "iat": int(time.time()),
     }
@@ -87,16 +94,16 @@ def decode_token(token: str) -> dict[str, Any] | None:
 
 # ---- 用户查询 ----
 def get_user(username: str) -> dict | None:
-    """按用户名查 users 表。"""
+    """按用户名查 users 表（含租户）。"""
     with db.get_conn() as conn:
         row = conn.execute(
-            "SELECT id, username, password_hash, role, display_name FROM users WHERE username=%s",
-            (username,)).fetchone()
+            "SELECT id, username, password_hash, role, display_name, tenant_id "
+            "FROM users WHERE username=%s", (username,)).fetchone()
     if row is None:
         return None
     return {
         "id": row[0], "username": row[1], "password_hash": row[2],
-        "role": row[3], "display_name": row[4],
+        "role": row[3], "display_name": row[4], "tenant_id": row[5] or db.DEFAULT_TENANT,
     }
 
 
@@ -117,7 +124,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(
     u = get_user(username)
     if u is None:  # 用户已被删除/禁用
         raise err
-    return User(id=u["id"], username=u["username"], role=u["role"], display_name=u["display_name"])
+    return User(id=u["id"], username=u["username"], role=u["role"],
+                display_name=u["display_name"], tenant_id=u.get("tenant_id") or db.DEFAULT_TENANT)
 
 
 def require_roles(*roles: str):

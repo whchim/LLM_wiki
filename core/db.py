@@ -5,7 +5,9 @@
 import os
 import re
 import uuid
+import logging
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Iterator
 
 import psycopg
@@ -36,6 +38,30 @@ _REQUIRED_DIRS = [
 ]
 
 _pool: ConnectionPool | None = None
+logger = logging.getLogger("llmwiki.db")
+
+# ---- 租户上下文（L3）----
+# 多租户隔离靠 Postgres RLS：策略用 current_setting('app.tenant_id') 判定，
+# 而 contextvar 决定"当前这次操作用哪个租户"。HTTP 请求由中间件绑定（见 api/main.py），
+# 后台 worker/脚本可用 bind_tenant() 显式指定；默认 'default'（单租户部署行为不变）。
+_TENANT: ContextVar[str] = ContextVar("llmwiki_tenant", default="default")
+DEFAULT_TENANT = "default"
+
+
+def current_tenant() -> str:
+    return _TENANT.get()
+
+
+def bind_tenant(tenant_id: str | None):
+    """绑定当前上下文的租户；返回 token 供复位。空值回落默认租户。"""
+    return _TENANT.set((tenant_id or DEFAULT_TENANT).strip() or DEFAULT_TENANT)
+
+
+def reset_tenant(token) -> None:
+    try:
+        _TENANT.reset(token)
+    except (ValueError, LookupError):      # 跨上下文复位失败时忽略，不影响主流程
+        pass
 
 
 def _dsn() -> str:
@@ -60,16 +86,36 @@ def close_pool() -> None:
 def ensure_schema() -> None:
     """自愈初始化：确保 Vault 目录树存在 + PostgreSQL 建表（幂等）。
 
-    供 Streamlit 启动时调用——即使跳过 init.sh 也能安全运行；
-    clone 后空目录/缺失目录在此补齐。"""
+    供服务启动时调用——即使跳过 init.sh 也能安全运行；clone 后空目录/缺失目录在此补齐。
+
+    **权限边界（L3 多租户）**：建表/建策略需要表属主权限。生产推荐的姿态是
+    「以属主跑一次迁移，再以**受限角色** `llmwiki_app` 跑应用」——受限角色没有 DDL 权限，
+    此时本函数不再尝试建表，而是**验证 schema 已就绪**（缺表就明确报错，不静默带病启动）。
+    """
     for rel in _REQUIRED_DIRS:
         os.makedirs(os.path.join(KB_ROOT, rel), exist_ok=True)
     with open(_SCHEMA, encoding="utf-8") as f:
         ddl = f.read()
-    with get_conn() as conn:
-        conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        conn.execute(ddl)
+    try:
+        with get_conn() as conn:
+            conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            conn.execute(ddl)
+    except psycopg.errors.InsufficientPrivilege:
+        _assert_schema_ready()
+        logger.warning("当前连接无 DDL 权限（受限角色）：跳过建表，已确认 schema 就绪")
     _ensure_admin()
+
+
+def _assert_schema_ready() -> None:
+    """受限角色路径下的自检：核心表必须已由属主迁移创建。"""
+    with get_conn() as conn:
+        for table in ("users", "knowledge_entries", "compile_tasks"):
+            try:
+                conn.execute(f"SELECT 1 FROM {table} LIMIT 1")
+            except psycopg.errors.UndefinedTable as exc:
+                raise RuntimeError(
+                    f"schema 未就绪（缺表 {table}）且当前角色无 DDL 权限："
+                    f"请先以属主执行一次迁移（docker compose up -d api，或手工跑 schema.sql）") from exc
 
 
 def _ensure_admin() -> None:
@@ -96,11 +142,17 @@ def _ensure_admin() -> None:
 
 @contextmanager
 def get_conn() -> Iterator["psycopg.Connection"]:
-    """PostgreSQL 连接上下文（连接池）。
+    """PostgreSQL 连接上下文（连接池）+ **租户上下文注入**。
 
     psycopg_pool 的 pooled connection 上下文已管理事务生命周期：
-    正常退出自动 commit，异常退出自动 rollback；归还池连接无需手动 close。"""
+    正常退出自动 commit，异常退出自动 rollback；归还池连接无需手动 close。
+
+    每次取连接都把当前租户写进 `app.tenant_id`（会话级），供 RLS 策略
+    `tenant_id = current_setting('app.tenant_id', true)` 判定——**连接是复用的，
+    所以每次 checkout 都必须重设**，否则会串租户。默认租户 `default`（单租户部署无感）。
+    """
     with _get_pool().connection() as conn:
+        conn.execute("SELECT set_config('app.tenant_id', %s, false)", (current_tenant(),))
         yield conn
 
 
@@ -541,19 +593,24 @@ DEFAULT_MAX_ATTEMPTS = 3
 
 
 def insert_compile_task(raw_path: str, fingerprint: str, *,
-                        tenant_id: str = "default", priority: int = 100) -> int:
+                        tenant_id: str | None = None, priority: int = 100) -> int:
     """入队一个 status='pending' 编译任务，返回 id（等价于 enqueue_compile_task）。"""
     return enqueue_compile_task(raw_path, fingerprint, tenant_id=tenant_id, priority=priority)
 
 
 def enqueue_compile_task(raw_path: str, fingerprint: str, *,
-                         tenant_id: str = "default", priority: int = 100) -> int:
-    """入队：priority 越小越先被认领（交互式上传用 10，批量扫描用 100）。"""
+                         tenant_id: str | None = None, priority: int = 100) -> int:
+    """入队：priority 越小越先被认领（交互式上传用 10，批量扫描用 100）。
+
+    `tenant_id` 不给时取**当前租户上下文**（不写死 'default'，否则多租户下上传的任务
+    会全部落进默认租户——这正是单测抓到的 bug）。
+    """
+    tenant = tenant_id or current_tenant()
     with get_conn() as conn:
         return conn.execute(
             "INSERT INTO compile_tasks (raw_path, fingerprint, status, tenant_id, priority, started_at) "
             "VALUES (%s,%s,'pending',%s,%s,now()) RETURNING id",
-            (raw_path, fingerprint, tenant_id, priority)).fetchone()[0]
+            (raw_path, fingerprint, tenant, priority)).fetchone()[0]
 
 
 def claim_compile_task(worker_id: str, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,

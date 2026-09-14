@@ -1,0 +1,40 @@
+-- 受限应用角色（L3 多租户隔离的必要条件）
+--
+-- 为什么需要它：**PostgreSQL 的超级用户绕过 RLS**，而 Docker 官方镜像的
+-- POSTGRES_USER（本项目为 llmwiki）默认就是超级用户——只加 tenant_id + RLS 策略
+-- 在本地"看起来配好了"，实际隔离是失效的（实测踩坑）。
+-- 因此应用应以受限角色连接：非超级用户 + 非表 owner 时，RLS 策略真正生效。
+--
+-- 用法：
+--   1) 本脚本由 docker-entrypoint-initdb.d 在**首次**初始化数据卷时执行；
+--   2) 之后把应用的 DB_USER 换成 llmwiki_app（docker-compose 的 api.DB_USER / .env）；
+--   3) 已有数据卷不会重跑 initdb 脚本，可手工执行本文件：
+--        docker compose exec -T db psql -U llmwiki -d llmwiki < docker/initdb/20-app-role
+--
+-- 权限边界：只给 DML + 序列使用权（应用不建表，DDL 由 ensure_schema 以属主身份执行）。
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'llmwiki_app') THEN
+        CREATE ROLE llmwiki_app LOGIN PASSWORD 'llmwiki' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+    END IF;
+END $$;
+
+GRANT CONNECT ON DATABASE llmwiki TO llmwiki_app;
+GRANT USAGE ON SCHEMA public TO llmwiki_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO llmwiki_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO llmwiki_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO llmwiki_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO llmwiki_app;
+
+\connect llmwiki_test
+GRANT CONNECT ON DATABASE llmwiki_test TO llmwiki_app;
+GRANT USAGE ON SCHEMA public TO llmwiki_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO llmwiki_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO llmwiki_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO llmwiki_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO llmwiki_app;

@@ -6,6 +6,7 @@ import 时零副作用（不连库、不起连接池），保证测试收集/工
 """
 import os
 import sys
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -69,6 +70,45 @@ async def security_limits(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    """**请求上下文绑定（必须放在中间件层）**：租户 + 关联 id。
+
+    为什么不能用依赖（Depends）绑定：FastAPI 的同步依赖与同步端点各自在线程池里跑，
+    `contextvars` 在线程池调用之间的修改**不会互相传递**——依赖里 set 的变量端点读不到。
+    中间件运行在事件循环里、在 `call_next` 之前设置，各线程池调用会复制当前上下文，
+    因此端点（以及它调用的 core/db）都能看到租户与 trace_id。
+
+    - 租户取自 JWT 的 `tenant` claim（登录时按 users.tenant_id 写入）；无 token / 解析失败 → 默认租户。
+      真正的作用是让 `core/db.get_conn()` 把它写进 `app.tenant_id`，由 Postgres RLS 强制隔离。
+    - trace_id 供 `trace_events` 与 Langfuse 上报对账（此前在 trace 依赖里绑定，同样受上下文传递限制）。
+    """
+    import llm_observability
+
+    trace_id = uuid.uuid4().hex
+    token = llm_observability.bind_trace_id(trace_id)
+    tenant_token = db.bind_tenant(_tenant_from_request(request))
+    try:
+        response = await call_next(request)
+    finally:
+        db.reset_tenant(tenant_token)
+        llm_observability.reset_trace_id(token)
+    response.headers["X-Trace-Id"] = trace_id
+    return response
+
+
+def _tenant_from_request(request: Request) -> str:
+    """从 Authorization 头解析租户（只读 claim，不做鉴权——鉴权仍由各端点的依赖负责）。"""
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("bearer "):
+        return db.DEFAULT_TENANT
+    payload = auth.decode_token(header.split(" ", 1)[1].strip())
+    if not isinstance(payload, dict):
+        return db.DEFAULT_TENANT
+    tenant = payload.get("tenant")
+    return str(tenant) if isinstance(tenant, str) and tenant.strip() else db.DEFAULT_TENANT
+
 
 app.include_router(auth_router.router)
 app.include_router(upload_router.router)

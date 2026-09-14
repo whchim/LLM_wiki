@@ -71,10 +71,10 @@ def trace(span_type: str):
     ):
         # 先取用户，供端点与 trace 使用（注入到 request.state 供端点读取）
         request.state.current_user = user
-        # 每次请求一个关联 id：写进 trace_events，并绑定到上下文，
-        # 让同一请求内的 Langfuse 上报（core/llm_observability）能与这条 trace 对上
-        trace_id = uuid.uuid4().hex
-        token = llm_observability.bind_trace_id(trace_id)
+        # trace_id 由中间件（api/main.py request_context）生成并绑定——**不能在依赖里绑定**：
+        # FastAPI 的同步依赖与同步端点各自在线程池中执行，contextvars 的修改不会互相传递。
+        # 这里只读同一个上下文变量，保证 trace_events 与 Langfuse 上报对账。
+        trace_id = llm_observability.current_trace_id() or uuid.uuid4().hex
         request.state.trace_id = trace_id
         start = time.perf_counter()
         status = "ok"
@@ -92,6 +92,5 @@ def trace(span_type: str):
             detail.setdefault("error", error_msg)
             _record(span_type, detail.pop("operation", None), status,
                     latency_ms, detail, _operator(request), trace_id)
-            llm_observability.reset_trace_id(token)
 
     return dependency

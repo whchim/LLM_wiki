@@ -55,6 +55,10 @@ def _import_history(sqlite_path: Path) -> dict:
     counts = {}
     with psycopg.connect(_pg_conninfo()) as pconn:
         with pconn.cursor() as cur:
+            # L3：tenant_id 的默认值是 current_setting('app.tenant_id')，裸连接（不走 db.get_conn）
+            # 必须自己设置，否则默认为 NULL 会被 NOT NULL 拦下（fail-closed，不静默串租户）。
+            # 历史迁移数据统一归默认租户。
+            cur.execute("SELECT set_config('app.tenant_id', 'default', false)")
             counts["compile_tasks"] = _import_table(
                 sconn, cur, "compile_tasks",
                 ["raw_path", "nexus_path", "fingerprint", "status", "error_msg",

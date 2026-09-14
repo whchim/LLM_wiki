@@ -59,6 +59,29 @@ def _reset_schema() -> None:
         conn.execute("CREATE SCHEMA public")
     import db
     db.ensure_schema()
+    _grant_to_app_role()
+
+
+def _grant_to_app_role() -> None:
+    """把新表的增删改查授给受限应用角色（L3 多租户 RLS 验收需要）。
+
+    受限角色（`docker/initdb/20-app-role` 创建）不能是超级用户——超级用户会绕过 RLS
+    （实测踩坑：Docker 默认 POSTGRES_USER 就是超级用户，只加策略不做角色分离等于没隔离）。
+    它也不是表属主，所以每次 schema 重建后都要重新授权；角色不存在时静默跳过，
+    RLS 用例会用明确的 skip 原因提示，而不是假绿。
+    """
+    try:
+        with psycopg.connect(**TEST_DB) as conn:
+            conn.execute(
+                "DO $$ BEGIN "
+                "  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='llmwiki_app') THEN "
+                "    GRANT USAGE ON SCHEMA public TO llmwiki_app; "
+                "    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO llmwiki_app; "
+                "    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO llmwiki_app; "
+                "  END IF; "
+                "END $$;")
+    except Exception:               # 授权失败不影响其它用例（RLS 用例会自行 skip 并说明原因）
+        pass
 
 
 @pytest.fixture(scope="session", autouse=True)

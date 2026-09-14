@@ -26,7 +26,8 @@ def login(body: LoginRequest) -> LoginResponse:
                           int((time.perf_counter() - start) * 1000),
                           {"error": "认证失败"}, body.username, trace_id)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
-    token = auth.create_access_token(user["username"], user["role"])
+    token = auth.create_access_token(user["username"], user["role"],
+                                     user.get("tenant_id") or "default")
     audit_log(user["username"], "login")
     trace_mod._record("login", "login", "ok",
                       int((time.perf_counter() - start) * 1000),
