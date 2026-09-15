@@ -79,9 +79,13 @@ const drawer = ref({ open: false, path: '', loading: false, content: '', exists:
 
 let ctx = null
 let sim = null
-let simNodes = []
-let simLinks = []
-let simDegree = new Map()
+// ⚠️ 必须是 ref：`visibleNodes` 由它们派生，而模板在**首屏（数据还没到）**就会读一次
+// 统计行里的 `visibleNodes.length`——普通 `let` 数组不会被追踪，computed 会把"空数组"
+// 永久缓存下来，于是数据到了画布依然是空的（真机实测：统计行显示"节点 0 · 关系 215"）。
+const simNodes = shallowRef([])
+const simLinks = shallowRef([])
+const simDegree = shallowRef(new Map())
+const labelsRef = shallowRef(new Set())
 let gridPattern = null
 let ro = null
 const view = { scale: 1, tx: 0, ty: 0 }
@@ -89,7 +93,7 @@ const size = { w: 900, h: 640 }
 const drag = { active: false, node: null, moved: false, panning: false, sx: 0, sy: 0, stx: 0, sty: 0 }
 const theme = computed(() => (isDark.value ? THEME.dark : THEME.light))
 
-const visibleNodes = computed(() => simNodes.filter((n) => !hiddenKinds.value.includes(n.kind)))
+const visibleNodes = computed(() => simNodes.value.filter((n) => !hiddenKinds.value.includes(n.kind)))
 const nodeById = computed(() => new Map(visibleNodes.value.map((n) => [n.id, n])))
 const meta = computed(() => graph.value.stats.by_kind || {})
 
@@ -97,7 +101,7 @@ const neighborIds = computed(() => {
   const id = hover.value?.node?.id || selected.value?.id
   if (!id) return null
   const set = new Set([id])
-  simLinks.forEach((l) => {
+  simLinks.value.forEach((l) => {
     const s = typeof l.source === 'object' ? l.source.id : l.source
     const t = typeof l.target === 'object' ? l.target.id : l.target
     if (s === id) set.add(t)
@@ -123,7 +127,6 @@ function labeledSet(nodes) {
     .slice(0, Math.max(0, LABEL_BUDGET - meta.length - missing.length))
   return new Set([...meta, ...missing, ...rest].map((n) => n.id))
 }
-let labels = new Set()
 
 // ---------- 数据 → 仿真 ----------
 
@@ -147,10 +150,10 @@ function buildSim() {
     degree.set(l.source, (degree.get(l.source) || 0) + 1)
     degree.set(l.target, (degree.get(l.target) || 0) + 1)
   })
-  simLinks = links
-  simNodes = nodes
-  simDegree = degree
-  labels = labeledSet(nodes)
+  simLinks.value = links
+  simNodes.value = nodes
+  simDegree.value = degree
+  labelsRef.value = labeledSet(nodes)
   // 斥力按规模自适应（固定常数在 18 节点和 140 节点下必有一头难看）
   physics.value.repel = repelFor(nodes.filter((n) => (degree.get(n.id) || 0) > 0).length)
   restartSim(true)
@@ -160,8 +163,9 @@ function restartSim(fresh = false) {
   if (sim) sim.stop()
   const cx = size.w / 2; const cy = size.h / 2
   // 只让**有连接**的节点参与物理：孤立条目另有摆放（否则包围盒被撑大、主簇被缩小）
-  const connected = simNodes.filter((n) => (simDegree.get(n.id) || 0) > 0)
-  const linked = simLinks.filter((l) => simDegree.has(l.source) && simDegree.has(l.target))
+  const connected = simNodes.value.filter((n) => (simDegree.value.get(n.id) || 0) > 0)
+  const linked = simLinks.value.filter(
+    (l) => simDegree.value.has(l.source) && simDegree.value.has(l.target))
   connected.forEach((n, i) => {
     const a = (i / Math.max(connected.length, 1)) * Math.PI * 2
     n.x = cx + Math.cos(a) * 90
@@ -188,7 +192,7 @@ function restartSim(fresh = false) {
 
 /** 孤立条目摆在主簇包围盒外的紧邻环上：不撑大白边，也一眼看出"它没关系"。 */
 function placeOrphans(connected) {
-  const isolates = simNodes.filter((n) => !(simDegree.get(n.id) || 0))
+  const isolates = simNodes.value.filter((n) => !(simDegree.value.get(n.id) || 0))
   if (!connected.length) {                 // 全孤立：直接按环铺开
     const cx = size.w / 2; const cy = size.h / 2
     isolates.forEach((n, i) => {
@@ -278,7 +282,7 @@ function draw() {
   const byId = nodeById.value
 
   // 连线：非邻域一律淡到很轻，避免"毛球感"
-  simLinks.forEach((l) => {
+  simLinks.value.forEach((l) => {
     const s = typeof l.source === 'object' ? l.source : byId.get(l.source)
     const t = typeof l.target === 'object' ? l.target : byId.get(l.target)
     if (!s || !t || !byId.has(s.id) || !byId.has(t.id)) return
@@ -344,7 +348,7 @@ function draw() {
     nodes.forEach((n) => {
       const focused = focus && focus.has(n.id)
       const dim = focus && !focused
-      const inBudget = labels.has(n.id)
+      const inBudget = labelsRef.value.has(n.id)
       if (!focused && !labelAll && !(labelZoom && inBudget) && !(inBudget && scale > 0.55)) return
       const r = radiusOf(n)
       const text = n.title.length > 18 ? `${n.title.slice(0, 18)}…` : n.title
@@ -408,7 +412,7 @@ function fitView() {
 }
 
 function focusNode(id) {
-  const n = simNodes.find((x) => x.id === id)
+  const n = simNodes.value.find((x) => x.id === id)
   if (!n) return
   selected.value = n
   view.scale = Math.max(view.scale, 1.15)
@@ -460,7 +464,7 @@ function onMove(e) {
 
 function neighborsOf(id) {
   const out = []
-  simLinks.forEach((l) => {
+  simLinks.value.forEach((l) => {
     const s = typeof l.source === 'object' ? l.source : nodeById.value.get(l.source)
     const t = typeof l.target === 'object' ? l.target : nodeById.value.get(l.target)
     if (!s || !t) return
@@ -485,7 +489,7 @@ function onUp(e) {
 }
 
 function releasePins() {
-  simNodes.forEach((n) => { n.fx = null; n.fy = null })
+  simNodes.value.forEach((n) => { n.fx = null; n.fy = null })
   sim.alpha(0.7).restart()
   ElMessage.success('已释放全部固定节点')
 }
@@ -525,7 +529,7 @@ const focusText = ref('')
 function doFocus() {
   const q = focusText.value.trim()
   if (!q) return
-  const hit = simNodes.find((n) => n.title.includes(q) || (n.path || '').includes(q))
+  const hit = simNodes.value.find((n) => n.title.includes(q) || (n.path || '').includes(q))
   if (hit) focusNode(hit.id)
   else ElMessage.info(`图中没有匹配「${q}」的节点`)
 }
