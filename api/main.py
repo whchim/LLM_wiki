@@ -22,7 +22,7 @@ if str(_SHLIB) not in sys.path:
 
 import db
 from api import auth
-from api.routers import admin_router, auth_router, clarification_router, customer_alias_router, customer_state_router, review_router, search_router, upload_router
+from api.routers import admin_router, ask_router, auth_router, clarification_router, customer_alias_router, customer_state_router, review_router, search_router, upload_router
 
 
 @asynccontextmanager
@@ -114,6 +114,7 @@ app.include_router(auth_router.router)
 app.include_router(upload_router.router)
 app.include_router(review_router.router)
 app.include_router(search_router.router)
+app.include_router(ask_router.router)
 app.include_router(admin_router.router)
 app.include_router(customer_state_router.router)
 app.include_router(clarification_router.router)

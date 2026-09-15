@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   DataAnalysis, DataBoard, Document, FolderOpened, Moon, Refresh, Search,
-  Setting, Sunny, UploadFilled, UserFilled, ChatDotRound, Checked, SwitchButton,
+  Setting, Sunny, UploadFilled, UserFilled, ChatDotRound, ChatLineRound, Checked, SwitchButton,
 } from '@element-plus/icons-vue'
 import { api, ApiError, ROLE_LABELS } from './api'
 import { useTheme } from './core/theme'
@@ -18,6 +18,7 @@ import GrowthPage from './pages/GrowthPage.vue'
 import ObservabilityPage from './pages/ObservabilityPage.vue'
 import SalesPage from './pages/SalesPage.vue'
 import CustomerStatePage from './pages/CustomerStatePage.vue'
+import AskPage from './pages/AskPage.vue'
 
 const auth = ref(JSON.parse(localStorage.getItem('llmwiki_auth') || 'null'))
 const view = ref('overview')
@@ -33,6 +34,7 @@ const NAV = [
   { key: 'overview', label: '工作总览', icon: DataBoard, group: '知识库' },
   { key: 'my-kb', label: '我的知识库', icon: FolderOpened, group: '知识库' },
   { key: 'browse', label: '全部条目', icon: Document, group: '知识库' },
+  { key: 'ask', label: '对话窗口', icon: ChatLineRound, group: '知识库' },
   { key: 'upload', label: '上传文档', icon: UploadFilled, group: '知识库' },
   { key: 'review', label: '审核管理', icon: Checked, group: '知识库', reviewerOnly: true },
   { key: 'growth', label: '自增长看板', icon: DataAnalysis, group: '洞察', reviewerOnly: true },
@@ -166,6 +168,7 @@ defineExpose({ notifyError })
         <OverviewPage v-if="view === 'overview'" :auth="auth" :is-reviewer="isReviewer" @go="(v) => (view = v)" />
         <MyKbPage v-else-if="view === 'my-kb'" @go="(v) => (view = v)" />
         <BrowsePage v-else-if="view === 'browse'" :initial-query="searchQuery" />
+        <AskPage v-else-if="view === 'ask'" />
         <UploadPage v-else-if="view === 'upload'" @go="(v) => (view = v)" />
         <ReviewPage v-else-if="view === 'review'" :is-reviewer="isReviewer" />
         <GrowthPage v-else-if="view === 'growth'" />

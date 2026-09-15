@@ -45,6 +45,10 @@ export const api = {
   myEntries: (limit = 200) => request(`/entries/mine${qs({ limit })}`),
   entryContent: (path) => request(`/entries/content${qs({ path })}`),
   search: (query, mode) => request(`/search${qs({ query, mode })}`),
+  // 对话窗口：检索 + 生成带引用溯源的答案（无依据时如实说明并记为知识缺口）
+  ask: (question, topK = 6) => request('/ask', {
+    method: 'POST', body: JSON.stringify({ question, top_k: topK }),
+  }),
   searchStats: () => request('/search/stats'),
   searchMissed: (limit = 20) => request(`/search/missed${qs({ limit })}`),
 

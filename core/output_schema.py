@@ -1,8 +1,9 @@
 """LLM 输出契约校验：把 prompt 里的输出契约代码化（确定性逻辑，不依赖 LLM）。
 
-三组校验对应三个产物入口（接入点与契约来源见 docs/VAL-01_LLM_输出校验_设计说明.md）：
+四组校验对应四个产物入口（接入点与契约来源见 docs/VAL-01_LLM_输出校验_设计说明.md）：
 - validate_review_output    : 审核 Agent 六维度 JSON（契约：prompts/review_prompt.md 输出格式 + 判定逻辑）
 - validate_compile_output   : 编译 Agent JSON（契约：prompts/compile_prompt.md 输出格式 + 编译规则）
+- validate_answer_output    : 问答 Agent JSON（契约：prompts/answer_prompt.md §输出契约；引用必须可溯源）
 - validate_entry_frontmatter: 落盘条目 YAML Frontmatter（约束：vault/SCHEMA.md）
 
 约定：全部返回 list[str] 错误明细；空列表 = 合法。失败方（引擎/API/工具）自行决定
@@ -155,6 +156,60 @@ def validate_compile_output(d: dict) -> list[str]:
                 if sec not in content:
                     errs.append(f"concepts[{i}].content 缺少必需章节：{sec}")
         _check_str_list(c.get("related_to"), f"concepts[{i}].related_to", errs)
+    return errs
+
+
+# ---- 问答 Agent 输出（answer_prompt.md §输出契约）----
+# 契约要点：回答**必须基于检索结果**，因此除了形状校验，还要校验"引用可溯源"：
+#   · 每条引用必须指向本次检索到的条目路径（防编造来源）；
+#   · 引用的 quote 必须能在该条目正文里逐字找到（防编造原文）。
+# 这两条是确定性的（路径集合、子串匹配），必须由代码判——模型自报"有引用"不算数。
+def validate_answer_output(d: dict, retrieved_paths: set[str] | None = None,
+                           bodies: dict[str, str] | None = None) -> list[str]:
+    """校验问答输出；`retrieved_paths`/`bodies` 给定时同时校验引用可溯源。"""
+    errs: list[str] = []
+    if not isinstance(d, dict):
+        return ["问答输出应为 JSON 对象"]
+
+    answer = d.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        errs.append("字段 answer 缺失或为空字符串")
+
+    insufficient = d.get("insufficient")
+    if not isinstance(insufficient, bool):
+        errs.append(f"字段 insufficient 应为布尔值，实际：{insufficient!r}")
+
+    citations = d.get("citations")
+    if not isinstance(citations, list):
+        errs.append("字段 citations 应为数组（无来源时给 []）")
+        citations = []
+    for i, c in enumerate(citations):
+        if not isinstance(c, dict):
+            errs.append(f"citations[{i}] 非对象")
+            continue
+        path = c.get("path")
+        if not isinstance(path, str) or not path.strip():
+            errs.append(f"citations[{i}].path 缺失或非字符串")
+            continue
+        if retrieved_paths is not None and path not in retrieved_paths:
+            errs.append(f"citations[{i}].path 不在本次检索结果中：{path!r}（禁止编造来源）")
+            continue
+        quote = c.get("quote")
+        if not isinstance(quote, str) or not quote.strip():
+            errs.append(f"citations[{i}].quote 缺失或非字符串（引用必须带原文片段）")
+            continue
+        if bodies and path in bodies:
+            body = bodies[path]
+            if quote.strip() not in body:
+                errs.append(f"citations[{i}].quote 在 {path} 正文中找不到（禁止编造原文）")
+
+    _check_str_list(d.get("followups", []), "followups", errs)
+
+    # 判定一致性：没检索到依据就必须承认 insufficient，不能"无来源却给确定答案"
+    if not insufficient and retrieved_paths is not None and not retrieved_paths:
+        errs.append("判定一致性：无任何检索结果时 insufficient 应为 true")
+    if not insufficient and retrieved_paths and not citations:
+        errs.append("判定一致性：insufficient=false 时至少要给出一条可溯源引用")
     return errs
 
 

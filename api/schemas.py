@@ -1,7 +1,7 @@
 """SP2 Pydantic 请求/响应模型（设计文档 5.1 端点表）。"""
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---- 认证 ----
@@ -150,3 +150,13 @@ class ModelConfigRequest(BaseModel):
     temperature: float = 0.0
     daily_token_quota: int | None = None
     enabled: bool = True
+
+
+class AskRequest(BaseModel):
+    """对话窗口提问。
+
+    `top_k` 为送进模型的依据条数（检索条数同值）；`mode` 保留给调试（默认 auto 双通道融合）。
+    """
+    question: str = Field(min_length=1, max_length=300)
+    top_k: int = Field(default=6, ge=1, le=20)
+    mode: str = Field(default="auto", pattern="^(auto|grep|vector)$")

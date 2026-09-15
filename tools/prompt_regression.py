@@ -33,6 +33,8 @@ REQUIRED_PHRASES = {
     ],
     "prompts/answer_prompt.md": [
         "严格基于检索结果", "引用可追溯", "诚实告知边界", "引用来源",
+        # 应用内 JSON 契约（与 output_schema.validate_answer_output 对齐）
+        "citations", "insufficient", "逐字出现", "不得编造路径",
     ],
     # 销售域两个 prompt 的硬性契约（与 SA-01/SA-11 契约、sales_state_agent 校验代码对齐）
     "prompts/sales_clarification_prompt.md": [
