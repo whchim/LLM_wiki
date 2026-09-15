@@ -12,19 +12,28 @@ router = APIRouter(tags=["graph"])
 
 
 @router.get("/graph")
-def get_graph(include_pending: bool = Query(False),
+def get_graph(include_pending: bool = Query(True),
+              include_meta: bool = Query(True),
+              include_raw: bool = Query(False),
               max_nodes: int = Query(1500, ge=50, le=5000),
               user: auth.User = Depends(auth.get_current_user)) -> dict:
-    """知识图谱：节点（条目）+ 边（`related_to` / `[[wikilink]]` / markdown 链接）+ 待建页面。
+    """知识图谱：节点（条目 + 知识库保留文件）+ 边（`related_to` / `[[wikilink]]` / markdown 链接）+ 待建页面。
 
-    `include_pending=true` 带上 `pending_review/`（审核视角看全貌）；
-    默认只看 `NEXUS/`（已发布），与检索口径一致。
+    范围对齐 Obsidian 的图谱口径（**整个知识库都该被看见**）：
+    - `include_meta=true`（默认）带上 `index.md` / `log.md` / `SCHEMA.md` 这些**保留文件**
+      （PRD WIKI-00 §Reserved Files），它们是知识库自我描述的一部分；
+    - `include_pending=true`（默认）带上 `pending_review/` 待审概念页；
+    - `include_raw=false`（默认）不带 `RAW/` 原始语料——打开即把未编译的原料混进来会淹没
+      真正的知识层，需要时一键打开（节点 `kind=raw`，前端另行着色）。
     """
-    return graph.build_graph(include_pending=include_pending, max_nodes=max_nodes)
+    return graph.build_graph(include_pending=include_pending, include_meta=include_meta,
+                             include_raw=include_raw, max_nodes=max_nodes)
 
 
 @router.get("/graph/neighbors")
 def get_neighbors(path: str = Query(..., min_length=1, max_length=500),
+                  include_pending: bool = Query(True),
+                  include_raw: bool = Query(False),
                   user: auth.User = Depends(auth.get_current_user)) -> dict:
     """某条目的 1 跳邻域（含"引用了但还没建"的待建页面）。"""
-    return graph.neighbors(path)
+    return graph.neighbors(path, include_pending=include_pending, include_raw=include_raw)

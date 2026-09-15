@@ -119,7 +119,8 @@ def test_valid_output_writes_products_and_bookkeeping(raw_file):
 
 
 def test_index_and_review_trigger_written(raw_file):
-    """资源摘要进 index.md 的资源节；概念页写 review 触发纸条；批次写 compile_session trace。"""
+    """资源摘要进 index.md 的资源节；概念页写 review 触发纸条；批次写 compile_session trace；
+    并且**写 Reserved File `NEXUS/log.md`**（PRD WIKI-00：审计日志要记操作事件）。"""
     import db
     batch = compile_service.compile_batch([RAW_REL], port=ScriptedPort([_valid_output()]))
     assert batch["compiled"] == 1
@@ -128,6 +129,10 @@ def test_index_and_review_trigger_written(raw_file):
     assert "资源 1 篇" in index                      # 头部统计行已刷新
     papers = list((raw_file / "_triggers").glob("review_*.md"))
     assert len(papers) == 1 and "pending_review/" in papers[0].read_text(encoding="utf-8")
+
+    # Reserved File：log.md 记录本次编译（此前只建空文件、从不写入，实测发现）
+    log = (raw_file / "NEXUS/log.md").read_text(encoding="utf-8")
+    assert "· 编译 ·" in log and RAW_REL in log and "概念 1" in log
 
     # 每个批次一条 compile_session trace，且标注引擎（可区分 api / claude_cli）
     with db.get_conn() as conn:

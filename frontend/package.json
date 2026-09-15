@@ -11,6 +11,7 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "@vitejs/plugin-vue": "latest",
+    "d3-force": "^3.0.0",
     "element-plus": "^2.14.5",
     "lucide-vue-next": "latest",
     "vite": "latest",

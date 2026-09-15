@@ -83,6 +83,7 @@ def approve_entry(review_id: int, old_path: str, new_path: str) -> str:
     move_entry(old_path, dst.relative_to(kb_root()).as_posix(), "active")
     set_human_decision(review_id, "approved")
     _append_index(f"[[概念-{dst.stem}]] → {dst.relative_to(kb_root()).as_posix()}")
+    append_log("审核", f"放行 {old_path} → {dst.relative_to(kb_root()).as_posix()}（review #{review_id}）")
     return dst.relative_to(kb_root()).as_posix()
 
 
@@ -92,6 +93,7 @@ def reject_entry(review_id: int, path: str, reason: str) -> None:
     _yaml_edit(p, "status", "draft")
     update_status(path, "draft")
     set_human_decision(review_id, "rejected", reason)
+    append_log("审核", f"驳回 {path}（review #{review_id}）：{(reason or '')[:80]}")
 
 
 def resubmit(review_id: int, path: str) -> None:
@@ -100,6 +102,7 @@ def resubmit(review_id: int, path: str) -> None:
     _yaml_edit(p, "status", "pending")
     update_status(path, "pending")
     resubmit_review(review_id)
+    append_log("审核", f"重提 {path}（review #{review_id}）")
 
 
 def _count_section_lines(text: str, section: str) -> int:
@@ -147,3 +150,48 @@ def append_index(section: str, line: str) -> None:
 def _append_index(line: str) -> None:
     """概念页审核通过后的索引追加（等价于 append_index("概念", line)）。"""
     append_index("概念", line)
+
+
+# ---- Reserved File：log.md（PRD WIKI-00 §Reserved Files：审计日志，Phase 2 起记录操作事件）----
+# 为什么要有它：index.md 回答"知识库里有什么"，log.md 回答"**它是什么时候、因为什么变成这样的**"。
+# LLM Wiki 编译范式的原始理念里，这两个保留文件是知识库自我描述的一部分——只更新索引、
+# 让日志长期为空文件，等于把"可审计"这一半丢了（真机检查时发现 log.md 是 0 字节）。
+LOG_SECTIONS = ("编译", "审核", "上传")
+_LOG_HEADER = ("# 编译日志\n\n"
+               "> 保留文件（Reserved File）：由编译/审核/上传链路 **append-only** 追加，"
+               "不改写历史行；对应库内 `audit_logs`/`trace_events` 的文件侧镜像。\n\n")
+
+
+def log_path() -> Path:
+    """当前租户的 log.md 路径。"""
+    return kb_root() / "NEXUS" / "log.md"
+
+
+def append_log(section: str, message: str, *, when: datetime | None = None) -> bool:
+    """向 `NEXUS/log.md` 追加一行操作事件（**append-only**，失败不抛）。
+
+    `section` ∈ 编译 / 审核 / 上传（其它值也接受，但节标题会原样新建）。
+    行格式：`- 2026-09-15 12:03 · 编译 · RAW/会议/x.md → NEXUS/资源/x.md（概念 2）`
+    日志写失败**绝不阻断主流程**（与 trace/审计同款纪律），但返回 False 供调用方留痕。
+    """
+    try:
+        target = log_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists() or target.stat().st_size == 0:
+            target.write_text(_LOG_HEADER, encoding="utf-8")
+        stamp = (when or datetime.now()).strftime("%Y-%m-%d %H:%M")
+        line = f"- {stamp} · {section} · {message}"
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(("" if _ends_with_newline(target) else "\n") + line + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def _ends_with_newline(path: Path) -> bool:
+    try:
+        with open(path, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            return f.read(1) == b"\n"
+    except OSError:
+        return True

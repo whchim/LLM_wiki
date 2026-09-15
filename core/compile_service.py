@@ -312,6 +312,7 @@ def compile_one(raw_relpath: str, *, port=None, max_tokens: int | None = None,
                                    error_msg=(result.attempts[-1].get("error") or "编译失败")[:500])
         result.error = result.attempts[-1].get("error") or "编译失败"
         result.latency_ms = int((time.perf_counter() - started) * 1000)
+        ops.append_log("编译", f"{raw_relpath} 失败：{result.error[:120]}")
         return result
 
     try:
@@ -329,6 +330,9 @@ def compile_one(raw_relpath: str, *, port=None, max_tokens: int | None = None,
     result.resource_path = resource_path
     result.concept_paths = concept_paths
     result.latency_ms = int((time.perf_counter() - started) * 1000)
+    # Reserved File（PRD WIKI-00）：编译成功写一行 log.md（审计日志，append-only）
+    ops.append_log("编译", f"{raw_relpath} → {resource_path}"
+                           f"（资源 1 + 概念 {len(concept_paths)}）")
     return result
 
 

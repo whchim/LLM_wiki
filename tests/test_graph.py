@@ -163,23 +163,70 @@ def test_max_nodes_is_a_loud_safety_valve(tmp_path, monkeypatch):
 
 # ---------- 真机语料暴露的三个解析问题（都已修，锁住）----------
 
-def test_index_and_log_files_are_not_nodes(tmp_path, monkeypatch):
-    """`index.md`/`log.md` 是自动生成的目录与流水，不是知识条目。
+def test_reserved_files_are_first_class_nodes(tmp_path, monkeypatch):
+    """**保留文件必须出现在图谱里**（PRD WIKI-00 §Reserved Files：index.md 是渐进式目录、
+    log.md 是操作审计日志、SCHEMA.md 是知识库规范）。
 
-    真机表现：index.md 会因为列出全部条目而成为**度数最高的超级节点**，
-    并且它写的 `[[概念-XXX]]` 会被误判成"待建页面"（实测 8 个缺口里有 2 个是它造的假）。
+    早先版本把它们当"非条目"排除了：图上"索引与日志不存在"，与编译范式理念不符
+    （用户实测反馈）。正确做法是**保留 + 分类**（`kind=index/log/schema`）交给前端着色/过滤——
+    索引因列出全部条目而度数高，这是事实，不该用隐藏来抹平。
     """
     _fixture(tmp_path, monkeypatch)
     root = paths.kb_root()
     (root / "NEXUS").mkdir(parents=True, exist_ok=True)
     (root / "NEXUS/index.md").write_text(
-        "# 知识库索引\n\n## 概念\n- [[新质生产力]]\n- [[概念-文件资产数字化]]\n",
-        encoding="utf-8")
-    (root / "NEXUS/log.md").write_text("# 编译日志\n\n- 编译了 [[新质生产力]]\n", encoding="utf-8")
+        "# 知识库索引\n\n## 概念\n- [[新质生产力]]\n- [[概念-文件资产数字化]]\n", encoding="utf-8")
+    (root / "NEXUS/log.md").write_text(
+        "# 编译日志\n\n- 2026-09-15 12:03 · 编译 · RAW/x.md → NEXUS/资源/x.md\n", encoding="utf-8")
+    (root / "SCHEMA.md").write_text("# 知识库规范\n\n标签体系见 [[新质生产力]]。\n", encoding="utf-8")
 
     g = graph.build_graph()
-    assert {n["id"] for n in g["nodes"]} == {
-        "NEXUS/概念/新质生产力.md", "NEXUS/概念/文件资产数字化.md", "NEXUS/资源/某政策文件.md"}
+    by_id = {n["id"]: n for n in g["nodes"]}
+    assert by_id["NEXUS/index.md"]["kind"] == "index" and by_id["NEXUS/index.md"]["is_meta"]
+    assert by_id["NEXUS/log.md"]["kind"] == "log"
+    assert by_id["SCHEMA.md"]["kind"] == "schema"
+    # 保留文件用中文显示名（项目约定），并带自己的类型/状态（前端过滤与着色用）
+    assert by_id["NEXUS/index.md"]["title"] == "知识库索引"
+    assert by_id["NEXUS/log.md"]["title"] == "编译日志" and by_id["NEXUS/log.md"]["type"] == "log"
+    assert by_id["SCHEMA.md"]["status"] == "meta"
+    assert g["stats"]["by_kind"]["concept"] == 2 and g["stats"]["by_kind"]["resource"] == 1
+    # 索引写的是带类型前缀的 wikilink：必须解析到真实条目，**不产生假缺口**
+    assert ("NEXUS/index.md", "NEXUS/概念/文件资产数字化.md", "wikilink") in {
+        (e["source"], e["target"], e["kind"]) for e in g["edges"] if e["resolved"]}
+    assert {m["title"] for m in g["missing"]} == {"中国式现代化", "高质量发展", "科技创新"}
+
+    # 也可以只要知识条目（前端过滤开关的语义）
+    only_entries = graph.build_graph(include_meta=False)
+    assert all(not n["is_meta"] for n in only_entries["nodes"])
+
+
+def test_raw_scope_is_opt_in(tmp_path, monkeypatch):
+    """RAW 原始语料默认不上图（会淹没知识层），显式打开时 `kind=raw` 以便另行着色。"""
+    _fixture(tmp_path, monkeypatch)
+    root = paths.kb_root()
+    (root / "RAW/会议").mkdir(parents=True, exist_ok=True)
+    (root / "RAW/会议/周会.md").write_text(
+        "周会纪要：讨论了 [[新质生产力]] 与 [[还没建的概念]]。\n", encoding="utf-8")
+
+    assert all(n["kind"] != "raw" for n in graph.build_graph()["nodes"])
+    with_raw = graph.build_graph(include_raw=True)
+    raw = next(n for n in with_raw["nodes"] if n["id"] == "RAW/会议/周会.md")
+    assert raw["kind"] == "raw" and raw["scope"] == "raw" and raw["status"] == "raw"
+    edges = {(e["source"], e["target"]) for e in with_raw["edges"] if e["resolved"]}
+    assert ("RAW/会议/周会.md", "NEXUS/概念/新质生产力.md") in edges
+    # RAW 里的悬空引用同样进"待建页面"
+    assert "还没建的概念" in {m["title"] for m in with_raw["missing"]}
+
+
+def test_pending_review_excluded_by_default(tmp_path, monkeypatch):
+    _fixture(tmp_path, monkeypatch)
+    root = paths.kb_root()
+    _write(root, "pending_review/待审概念.md", title="待审概念", status="pending",
+           body="[[新质生产力]]")
+    assert graph.build_graph()["stats"]["by_kind"].get("concept") == 2
+    with_pending = graph.build_graph(include_pending=True)
+    assert with_pending["stats"]["nodes"] == 4
+    assert _node(with_pending, "pending_review/待审概念.md")["status"] == "pending"
 
 
 def test_wikilink_with_type_prefix_resolves(tmp_path, monkeypatch):

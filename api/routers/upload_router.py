@@ -136,6 +136,10 @@ async def upload_files(
 
     audit_log(user.username, "upload", target_path=(",".join(saved))[:500],
               detail={"files": saved, "category": category})
+    # Reserved File：上传是知识库的"入口事件"，同样进 log.md（append-only）
+    if saved:
+        ops.append_log("上传", f"{len(saved)} 篇入队（{category}）：{'、'.join(saved)[:200]}"
+                               f" · by {user.username}")
     return UploadResult(ok=len(saved), errors=errors, task_ids=task_ids)
 
 

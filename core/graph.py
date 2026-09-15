@@ -28,14 +28,19 @@ import paths
 
 NEXUS_DIR = "NEXUS"
 PENDING_DIR = "pending_review"
+RAW_DIR = "RAW"
 EDGE_RELATED = "related_to"
 EDGE_WIKILINK = "wikilink"
 EDGE_LINK = "link"
 
-# 自动生成的目录/流水文件不是知识条目：`index.md` 是索引（列出所有条目），
-# `log.md` 是编译日志。它们混进图谱会变成度数最高的"超级节点"，
-# 而且索引里的 `[[概念-XXX]]` 这种带类型前缀的写法会被误判成"待建页面"（实测）。
-NON_ENTRY_FILES = {"index.md", "log.md", "SCHEMA.md"}
+# **保留文件**（PRD WIKI-00 §Reserved Files）：index.md 是渐进式目录、log.md 是操作审计日志、
+# SCHEMA.md 是知识库规范。它们**是知识库自我描述的一部分，必须出现在图谱里**——
+# 早先版本把它们当"非条目"排除掉了，结果是"索引与日志在图上不存在"，与编译范式的理念不符。
+# 正确的处理是**保留并分类**（`kind=index/log/schema`），由前端着色与过滤，
+# 而不是藏起来；索引因列出全部条目而度数高，这是**事实**，不该用排除来抹平。
+RESERVED_FILES = {"index.md": "index", "log.md": "log", "SCHEMA.md": "schema"}
+# 保留文件的中文显示名（项目约定：知识文件与展示一律中文）
+RESERVED_TITLES = {"index": "知识库索引", "log": "编译日志", "schema": "知识库规范"}
 # 索引里的 wikilink 可能带类型前缀（`概念-文件资产数字化`）——解析兜底时剥掉再试一次
 TYPE_PREFIXES = ("概念-", "资源-", "研究-", "术语-")
 
@@ -65,15 +70,59 @@ def _read(path: Path) -> tuple[dict, str]:
     return (meta if isinstance(meta, dict) else {}), parts[2]
 
 
-def _iter_files(root: Path, include_pending: bool):
-    dirs = [root / NEXUS_DIR] + ([root / PENDING_DIR] if include_pending else [])
-    for base in dirs:
+def _iter_files(root: Path, include_pending: bool, include_raw: bool, include_meta: bool):
+    """要纳入图谱的 Markdown。默认：已发布条目 + 保留文件（index/log/SCHEMA）。
+
+    - `include_pending`：带上 `pending_review/`（待审概念页）；
+    - `include_raw`：带上 `RAW/`（**原始语料**，不是编译产物，前端用另一种颜色区分）；
+    - `include_meta=False`：只画知识条目（不画保留文件）。
+
+    注意 **根层只取根目录本身、不递归**：递归会让 NEXUS/pending/RAW 里的文件先以"根层"身份
+    被收进来，等到专门的分支时又被 `seen` 挡掉，于是 RAW 文件被当成知识条目（实测踩过）。
+    """
+    seen: set[str] = set()
+
+    def _yield(base: Path, scope: str):
         if not base.is_dir():
-            continue
-        for dirpath, _, files in os.walk(base):
+            return
+        for dirpath, dirnames, files in os.walk(base):
+            # 触发文件/建议目录不属知识内容；根层不递归（见 docstring）
+            dirnames[:] = [d for d in dirnames if d not in ("_triggers", "_suggestions", "tenants")]
+            if scope == "root":
+                dirnames[:] = []
             for fn in sorted(files):
-                if fn.endswith(".md") and fn not in NON_ENTRY_FILES:
-                    yield Path(dirpath) / fn
+                if not fn.endswith(".md"):
+                    continue
+                p = Path(dirpath) / fn
+                rel = p.relative_to(root).as_posix()
+                parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+                # include_meta=False：连 NEXUS 里的 index/log 一起不画（"只看知识条目"的语义）
+                if (not include_meta and scope != "raw" and parent in ("NEXUS", "")
+                        and fn in RESERVED_FILES):
+                    continue
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                yield p, scope
+
+    if include_meta:
+        yield from _yield(root, "root")                  # 根层保留文件（SCHEMA.md 等）
+    yield from _yield(root / NEXUS_DIR, "nexus")
+    if include_pending:
+        yield from _yield(root / PENDING_DIR, "pending")
+    if include_raw:
+        yield from _yield(root / RAW_DIR, "raw")
+
+
+def _classify(rel: str, scope: str, meta: dict) -> tuple[str, bool]:
+    """返回 (kind, is_meta)。保留文件按文件名归类；RAW 一律 kind=raw（原始语料）。"""
+    name = rel.rsplit("/", 1)[-1]
+    parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+    if scope != "raw" and parent in ("NEXUS", "") and name in RESERVED_FILES:
+        return RESERVED_FILES[name], True
+    if scope == "raw":
+        return "raw", False
+    return str(meta.get("type") or "resource"), False
 
 
 def _norm(target: str) -> str:
@@ -135,11 +184,16 @@ def _is_external(target: str) -> bool:
 
 
 def build_graph(tenant_id: str | None = None, *, include_pending: bool = False,
+                include_meta: bool = True, include_raw: bool = False,
                 max_nodes: int = 1500) -> dict:
     """构建该租户的知识图谱：`{nodes, edges, missing, stats}`。
 
-    `max_nodes` 是安全阀（超大知识库不把响应撑爆）：按"先 NEXUS 后 pending、路径序"截断，
-    并在 `stats.truncated=True` 里**如实标注**（不静默丢数据）。
+    范围（对齐 Obsidian 的图谱口径——**整个知识库都该被看见**，包括知识库自己的保留文件）：
+    默认 = `NEXUS/**`（已发布）+ 保留文件（`index.md`/`log.md`/`SCHEMA.md`）；
+    `include_pending` 带待审概念页，`include_raw` 带 `RAW/` 原始语料（`kind=raw`，另行着色）。
+
+    `max_nodes` 是安全阀（超大知识库不把响应撑爆）：按"先 NEXUS 后保留文件、再 pending、再 RAW、
+    路径序"截断，并在 `stats.truncated=True` 里**如实标注**（不静默丢数据）。
     """
     root = Path(paths.kb_root(tenant_id))
     nodes: list[dict] = []
@@ -147,17 +201,20 @@ def build_graph(tenant_id: str | None = None, *, include_pending: bool = False,
     by_title: dict[str, str] = {}          # title/stem → path（后写覆盖，同标题时以路径序后者为准）
     truncated = False
 
-    for file in _iter_files(root, include_pending):
+    for file, scope in _iter_files(root, include_pending, include_raw, include_meta):
         rel = file.relative_to(root).as_posix()
         if len(nodes) >= max_nodes:
             truncated = True
             break
         meta, body = _read(file)
-        title = str(meta.get("title") or file.stem)
+        kind, is_meta = _classify(rel, scope, meta)
+        title = (RESERVED_TITLES.get(kind) if is_meta
+                 else str(meta.get("title") or file.stem))
         node = {
             "id": rel, "path": rel, "title": title,
-            "type": meta.get("type") or "resource",
-            "status": meta.get("status") or "active",
+            "kind": kind, "is_meta": is_meta, "scope": scope,
+            "type": kind if is_meta else (meta.get("type") or ("resource" if scope != "raw" else "raw")),
+            "status": "meta" if is_meta else (meta.get("status") or ("raw" if scope == "raw" else "active")),
             "department": meta.get("department"),
             "description": meta.get("description"),
             "degree": 0,
@@ -214,6 +271,9 @@ def build_graph(tenant_id: str | None = None, *, include_pending: bool = False,
 
     missing_nodes = sorted(missing.values(), key=lambda m: (-m["count"], m["title"]))
     orphans = [n["id"] for n in nodes if n["degree"] == 0]
+    by_kind: dict[str, int] = {}
+    for n in nodes:
+        by_kind[n["kind"]] = by_kind.get(n["kind"], 0) + 1
     return {
         "nodes": nodes,
         "edges": edges,
@@ -221,14 +281,18 @@ def build_graph(tenant_id: str | None = None, *, include_pending: bool = False,
         "stats": {
             "nodes": len(nodes), "edges": len(edges),
             "missing": len(missing_nodes), "orphans": len(orphans),
-            "pending_included": include_pending, "truncated": truncated,
+            "by_kind": by_kind,
+            "pending_included": include_pending, "meta_included": include_meta,
+            "raw_included": include_raw, "truncated": truncated,
         },
     }
 
 
-def neighbors(path: str, tenant_id: str | None = None, *, include_pending: bool = True) -> dict:
+def neighbors(path: str, tenant_id: str | None = None, *, include_pending: bool = True,
+              include_meta: bool = True, include_raw: bool = False) -> dict:
     """某条目的 1 跳邻域（中心 + 出边/入边邻居）。路径不在图中时返回 `{found: False}`。"""
-    graph = build_graph(tenant_id, include_pending=include_pending)
+    graph = build_graph(tenant_id, include_pending=include_pending,
+                        include_meta=include_meta, include_raw=include_raw)
     ids = {n["id"]: n for n in graph["nodes"]}
     if path not in ids:
         return {"found": False, "path": path, "neighbors": []}
