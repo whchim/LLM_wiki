@@ -103,14 +103,17 @@ def fuse(grep_hits: list[str], vec_hits: list[dict] | None,
     """加权分数融合：score = w_grep×grep贡献 + w_vec×similarity。
 
     grep_hits 是无序文件路径（字面命中等权，除以 sqrt(n) 温和归一）；
-    vec_hits 带相似度直接加权。返回按 score 降序的统一条目列表。"""
+    vec_hits 带相似度直接加权。返回按 score 降序的统一条目列表；
+    `similarity` 一并保留（前端要展示"为什么这条被检索到"，也便于排查融合排序）。"""
     scores: dict[str, dict] = {}
 
-    def _add(path: str, channel: str, pts: float):
-        entry = scores.setdefault(path, {"path": path, "score": 0.0,
+    def _add(path: str, channel: str, pts: float, similarity: float | None = None):
+        entry = scores.setdefault(path, {"path": path, "score": 0.0, "similarity": None,
                                          "channels": {"grep": 0, "vector": 0}})
         entry["score"] += pts
         entry["channels"][channel] = 1
+        if similarity is not None:
+            entry["similarity"] = similarity
 
     if grep_hits:
         w = w_grep / math.sqrt(len(grep_hits))
@@ -118,7 +121,7 @@ def fuse(grep_hits: list[str], vec_hits: list[dict] | None,
             _add(p, "grep", w)
     if vec_hits:
         for item in vec_hits:
-            _add(item["path"], "vector", w_vec * item["similarity"])
+            _add(item["path"], "vector", w_vec * item["similarity"], item["similarity"])
 
     return sorted(scores.values(), key=lambda x: x["score"], reverse=True)
 
