@@ -42,3 +42,24 @@ def test_schema_is_idempotent(tmp_path):
                       "sensitive_numeric_values", "clarification_sessions", "clarification_turns",
                       "clarification_answers", "customer_aliases",
                       "tenant_model_configs", "llm_usage"}
+
+
+def test_entry_identity_is_per_tenant(tmp_path):
+    """L3.5：条目身份 = (tenant_id, path)，贡献记录外键也必须是复合的（跨租户引用被数据库挡住）。
+
+    锁的是这条：文件按租户分区后不同租户会有**同名条目**（`NEXUS/概念/产品.md`），
+    身份仍是单列 path 的话，B 租户写入会覆盖 A 租户的行。
+    """
+    with _conn() as conn:
+        pk = conn.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conrelid='knowledge_entries'::regclass AND contype='p'").fetchone()[0]
+        fk_cols = conn.execute(
+            "SELECT (SELECT array_agg(a.attname ORDER BY x.ord) "
+            "        FROM unnest(c.conkey) WITH ORDINALITY AS x(attnum, ord) "
+            "        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum) "
+            "FROM pg_constraint c "
+            "WHERE c.conrelid='contributors'::regclass AND c.contype='f' "
+            "  AND c.confrelid='knowledge_entries'::regclass").fetchone()
+    assert pk == "PRIMARY KEY (tenant_id, path)"
+    assert fk_cols and fk_cols[0] is not None and sorted(fk_cols[0]) == ["entry_path", "tenant_id"]

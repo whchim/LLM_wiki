@@ -16,9 +16,10 @@ from api.schemas import TaskOut, UploadResult
 
 router = APIRouter(prefix="/uploads", tags=["upload"])
 
-# 动态读取 KB_ROOT（每次调用），保证测试/容器的 monkeypatch/env 生效
+# 知识库根：按租户分区（L3.5；默认租户 = KB_ROOT），每次调用动态解析
 def _kb_root() -> str:
-    return os.environ.get("KB_ROOT", os.path.join(os.path.dirname(ops.__file__), "..", "vault"))
+    import paths
+    return str(paths.kb_root())
 
 
 def _engine() -> str:

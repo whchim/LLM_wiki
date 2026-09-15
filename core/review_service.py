@@ -1,4 +1,4 @@
-﻿"""应用内审核引擎：把 `workflows/review_workflow.md` 的六维度审核**代码化**。
+"""应用内审核引擎：把 `workflows/review_workflow.md` 的六维度审核**代码化**。
 
 分工（与项目"规则/模型分工"一致）：
 - **确定性两维交代码**：维度一完整性（`rules.check_completeness`）、维度五敏感信息（`rules.check_sensitive`）；
@@ -26,6 +26,7 @@ import yaml
 import db
 import model_port
 import output_schema
+import paths
 import rules
 from clarification_service import load_system_prompt
 
@@ -44,8 +45,8 @@ VERDICTS = ("approved", "rejected", "needs_human_review")
 
 
 def kb_root() -> Path:
-    default = Path(__file__).resolve().parent.parent / "vault"
-    return Path(os.environ.get("KB_ROOT") or default)
+    """知识库根（按租户分区，见 `core/paths.py`；默认租户 = KB_ROOT 本身）。"""
+    return paths.kb_root()
 
 
 @dataclass

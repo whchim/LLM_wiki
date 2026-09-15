@@ -121,7 +121,7 @@
 
 ---
 
-## 5. 多租户路线图（L2 → L4）
+## 5. 多租户路线图（L2 → L4，含 L3.5 文件分区）
 
 L1 只解决"引擎能进容器"。要在云端做多租户，还差三层：
 
@@ -212,25 +212,51 @@ MODEL_TIMEOUT`、向量共用 `DASHSCOPE_API_KEY`），一份配置服务所有�
 > 未做：模型**成本**估算（只有 token，没有按模型单价的金额换算）；配额**月度/按租户分组**的细粒度策略；
 > 配额超限目前是硬失败，未做"降级到便宜模型"的可配置策略。
 
-### L3.5 文件分区（单实例服务多租户的前置）—— 未做
+### L3.5 文件分区 —— ✅ 已实现
 
-当前 `KB_ROOT` 仍是**进程级根**，多租户部署时每租户一个 worker + 一份挂载即可；
-若要让**单实例**同时服务多个租户，需要把编译/审核服务的路径解析接到租户：
-`kb_root(tenant_id) = <KB_ROOT>/tenants/<tenant_id>`，默认租户仍用 `<KB_ROOT>` 本身（本地无感）。
-受影响面：`compile_service.kb_root()`、`review_service.kb_root()`、`scan_new_raw`、`ops` 的
-approve/reject 与 index 更新、`/uploads` 的落盘路径、`search_router._kb_root()`。
+**问题**：`KB_ROOT` 原本是**进程级根**——数据库层（`tenant_id` + RLS）隔离好了，但**文件层没有**：
+单实例同时服务两个租户时，两家的 RAW、编译产物、`pending_review/`、`index.md` 会挤在同一个目录里，
+既互相覆盖（同名条目）又能互相看见。多租户只有"库隔离"不成立。
 
-实测现状：`MODEL_API_KEY / MODEL_BASE_URL / MODEL_NAME / MODEL_TIMEOUT /
-DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变量，
-一份配置服务所有租户，改配置要重启，密钥明文在 env，**没有按租户的用量与配额**。
+**做法**（新增 `core/paths.py`，唯一路径解析入口）：
 
-| 新表 | 关键字段 | 作用 |
-|---|---|---|
-| `tenant_model_configs` | `tenant_id, provider, base_url, model, api_key_ciphertext, max_tokens, temperature, daily_token_quota, enabled, updated_by` | 租户自带模型与密钥；`api_key_ciphertext` 复用现成的 AES-GCM `sensitive_cipher` 加密；`model_port.for_tenant()` **先查库、查不到回退环境变量**（本地开发零影响） |
-| `llm_usage` | `tenant_id, purpose(compile/review/answer/clarification/state), model, input_tokens, output_tokens, latency_ms, cost, trace_id` | 配额拦截 + 账单 + 成本看板 |
+```
+kb_root()            # 跟随当前租户上下文（HTTP 中间件 / worker 绑定）
+kb_root("tenant-a")  # 显式指定
+default/None/空串 → <KB_ROOT> 本身（单租户部署与本地开发路径完全不变）
+其他租户          → <KB_ROOT>/tenants/<id>/
+```
 
-密钥轮换沿用已有机制（`SENSITIVE_FIELD_KEY=v1:…,v2:…` + `key_version` 落库）；
-`core/llm_observability.py` 的上报已就位，加 `tenant_id` 标签即可按租户看 Langfuse。
+- **安全**：租户 id 会拼进文件路径，必须过白名单 `^[A-Za-z0-9_-]{1,64}$`，
+  非法直接抛 `ValueError`（`../evil`、`a/b`、超长、中文一律拒），**不做"清洗后继续"**；
+  空串/None 视为默认租户（与 `db.bind_tenant` 同口径），避免半途失败。
+- **接入面**：`compile_service.kb_root()` / `review_service.kb_root()` / `ops`（approve·reject·trigger·index）/
+  `upload_router._kb_root()` / `search_router._kb_root()` / `admin_router` 周报与 embedding 回填 /
+  `db.rebuild_index`（扫本租户、也只删本租户的行）。
+
+**实测暴露并修掉的两个真缺陷**（都不是"写完就算"，是测试与数据抓出来的）：
+
+1. **编译去重判据漏了租户**：`find_done_compile_task(raw_path, fingerprint)` 只按路径+指纹判重，
+   文件分区后两个租户有**完全同名同内容**的 `RAW/会议/周会.md`，B 租户会命中 A 租户的 `done` 记录
+   被判 `cached` 而**永不编译**。修法：去重、`latest_compile_task`、`queue_stats`、
+   `list_recent_compile_tasks` 全部显式带 `tenant_id`。⚠️ **不能指望 RLS 兜住**——
+   本地/CI 连接是超级用户，RLS 完全不生效（见下方自检）。
+2. **条目身份必须按租户**：`knowledge_entries` 原来是 `path` 单列主键，不同租户的同名条目会
+   `ON CONFLICT (path) DO UPDATE` **跨租户覆盖**、B 的条目根本存不下来。修法：
+   `PRIMARY KEY (tenant_id, path)`（`schema.sql` 幂等迁移：只在当前主键仍是单列 path 时替换），
+   `upsert_entry` / `update_status` / `move_entry` / `rebuild_index` 的冲突目标与 WHERE 全部带租户；
+   连带 `contributors.entry_path` 单列外键失去唯一索引支撑 → 改为**复合外键
+   `(tenant_id, entry_path)`**（`NOT VALID` 添加：历史行不阻塞启动，新写入立即受约束）。
+
+**诚实自检（`db.rls_enforced()`）**：返回当前角色是否**真的**受 RLS 约束
+（超级用户/`BYPASSRLS` → `False`），`ensure_schema()` 启动时据此打告警。
+本地 Docker 的 `POSTGRES_USER` 就是超级用户，所以本地多租户实际靠**应用层显式过滤**这一层——
+文档里不许写成"已由数据库强制隔离"；生产/验收必须用受限角色 `llmwiki_app`。
+
+测试：`tests/test_tenant_paths.py`（14 例：默认租户路径不变、租户子树自愈、白名单拒穿越、
+**两个租户同名同内容文件各自编译且落库各一行**、ops 触发文件与上传/检索根按租户解析）、
+`tests/test_schema.py::test_entry_identity_is_per_tenant`（锁复合主键与复合外键）、
+`tests/test_tenant_isolation.py::test_rls_selfcheck_never_overclaims`（锁"不假装隔离生效"）。
 
 ---
 
@@ -272,7 +298,10 @@ DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变
 2. **上传分类仍是 4 类**（`个人_notes/会议/经验/项目`）：`upload_router.CATEGORIES`、前端下拉、
    `init.sh` 目录树未同步扩展；编译侧不受影响（`scan_new_raw` 遍历 RAW 下所有目录），但 UI 体验不一致。
 3. **概念页仍需人工放行**：这是设计边界（不让模型改事实），不做"自动发布"。
-4. **L3/L4 未实现**：RLS 隔离、租户模型配置与用量表仍是设计（§5）。
+4. **本地多租户隔离只有应用层这一层**：本地/CI 连接是超级用户，RLS 不生效（`db.rls_enforced()`
+   会明确报 `False` 并在启动日志告警），真正由数据库强制的隔离要在受限角色 `llmwiki_app` 下验收。
+   另外**读取路径**（`/search`、`/entries`、看板 SQL）多数仍靠 RLS 兜底，未逐条补显式 `tenant_id`——
+   生产姿态（受限角色）下安全，超级用户姿态下会串数据。
 5. **CLI 引擎保留但未在 CI 覆盖**：需要宿主机 CLI 与登录态，属本地开发路径。
 6. **向量通道未回填**：新编译条目的 `knowledge_entries.embedding` 为空，检索目前只命中 grep 通道，
    需跑一次 embedding backfill 才是真正的双通道（属 SP4 既有能力，不在本设计范围）。
@@ -324,3 +353,18 @@ DASHSCOPE_API_KEY（embedding 共用）/ SENSITIVE_FIELD_KEY` 全部走环境变
    `encrypt_secret/decrypt_secret`（与数值加密同一条 AES-GCM 路径与轮换机制）。
    新增 `tests/test_tenant_model_config.py`（11 例：配置优先级、purpose 分级、密钥加密与密文搬移失效、
    省略/清空语义、成功与失败都记账、记账失败不阻断调用、配额拦截且模型零调用、租户隔离、接口权限与脱敏）。
+- **v0.5（2026-09-14）**：**L3.5 文件分区落地**（补齐"库隔离了、文件没隔离"的缺口）。
+   ① 新增 `core/paths.py`：`kb_root()`/`ensure_tenant_tree()`，默认租户 = `<KB_ROOT>` 本身（本地无感）、
+   其他租户 = `<KB_ROOT>/tenants/<id>/`，租户 id 过白名单（拒目录穿越，非法直接抛错不清洗）、空串=默认租户；
+   接入 compile/review 服务、`ops`、上传/检索/审核/管理路由、`db.rebuild_index`。
+   ② 测试抓出**真 bug**：编译去重只按 (raw_path, fingerprint)，两租户同名同内容文件会被误判 `cached`
+   而永不编译 → `find_done_compile_task`/`latest_compile_task`/`queue_stats`/`list_recent_compile_tasks`
+   全部显式带 `tenant_id`（`queue_stats` 新增 `all_tenants`，worker 跨租户巡检才用）。
+   ③ `knowledge_entries` 身份由 `path` 改为 **`(tenant_id, path)`**（幂等迁移；原主键下 B 租户同名条目会
+   `ON CONFLICT (path) DO UPDATE` 跨租户覆盖），`contributors.entry_path` 单列外键随之改
+   **复合外键 `(tenant_id, entry_path)`**（`NOT VALID` 添加，历史行不阻塞启动、新写入立即受约束）；
+   `upsert_entry`/`update_status`/`move_entry`/`rebuild_index`/embedding 回填均按租户过滤。
+   ④ 新增 `db.rls_enforced()` 诚实自检（超级用户/BYPASSRLS → `False`）+ `ensure_schema()` 启动告警，
+   避免把"本地超级用户连接下的应用层过滤"说成"数据库强制隔离"。
+   新增 `tests/test_tenant_paths.py`（14 例）、`test_schema.test_entry_identity_is_per_tenant`、
+   `test_tenant_isolation.test_rls_selfcheck_never_overclaims`；全量 **412 passed**，本地开发库迁移幂等复验通过。

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 import db
 import ops
+import paths
 import rules
 from api import auth, trace as trace_mod
 from api.audit import audit_log
@@ -56,7 +57,7 @@ def approve(review_id: int, request: Request,
     if rec is None:
         raise HTTPException(status_code=404, detail="审核记录不存在")
     _require_transition(rec, None, "pending", "通过")
-    source = Path(ops.KB_ROOT) / rec["nexus_path"]
+    source = paths.kb_root() / rec["nexus_path"]
     try:
         text = source.read_text(encoding="utf-8")
     except FileNotFoundError as e:

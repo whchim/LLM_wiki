@@ -106,7 +106,7 @@ def run_queue(limit: int | None = None, worker_id: str | None = None,
         "failed": sum(1 for r in results if r.status == "failed"),
         "files": [p for r in results for p in r.produced],
         "latency_ms": latency_ms, "trace_id": trace_id,
-        "queue": db.queue_stats(tenant_id),
+        "queue": db.queue_stats(tenant_id, all_tenants=tenant_id is None),
         "results": [r.audit_dict() for r in results],
     }
 

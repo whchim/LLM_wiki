@@ -121,6 +121,21 @@ def test_login_token_carries_tenant_and_middleware_binds_it():
 
 # ---------- B. 数据库级 RLS（受限角色） ----------
 
+def test_rls_selfcheck_never_overclaims():
+    """`db.rls_enforced()` 必须只反映角色真实权限——**不假装隔离生效**。
+
+    本地/CI 默认连接是超级用户（`rolbypassrls=t`），此时 RLS 完全不生效，隔离只有
+    应用层的显式 tenant_id 过滤这一层；自检必须报 False 并在启动日志里告警，
+    否则会给出"已多租户隔离"的错误结论。
+    """
+    with db.get_conn() as conn:
+        bypass = conn.execute(
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user").fetchone()[0]
+    assert db.rls_enforced() is (not bypass)
+    if bypass:
+        assert db.rls_enforced() is False
+
+
 def _app_role_conn(tenant: str):
     """用**受限角色**（非超级用户、非属主）打开连接并设置租户——RLS 只对这类连接生效。"""
     import conftest as _c

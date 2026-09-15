@@ -1,4 +1,4 @@
-﻿"""应用内编译引擎：把 `workflows/compile_workflow.md` 的步骤**代码化**。
+"""应用内编译引擎：把 `workflows/compile_workflow.md` 的步骤**代码化**。
 
 ## 为什么需要它（设计文档：docs/WIKI-70_Phase2_应用内编译引擎_设计文档.md）
 
@@ -43,6 +43,7 @@ import db
 import model_port
 import ops
 import output_schema
+import paths
 import rules
 from clarification_service import load_system_prompt
 
@@ -59,9 +60,11 @@ PURPOSE = "compile"
 
 
 def kb_root() -> Path:
-    """知识库根（每次调用动态读 KB_ROOT，测试/容器/本地一致）。"""
-    default = Path(__file__).resolve().parent.parent / "vault"
-    return Path(os.environ.get("KB_ROOT") or default)
+    """知识库根（按租户分区，见 `core/paths.py`；每次调用动态解析）。
+
+    默认租户 = `KB_ROOT` 本身；其他租户 = `<KB_ROOT>/tenants/<id>` —— 单租户部署路径不变。
+    """
+    return paths.kb_root()
 
 
 @dataclass

@@ -29,16 +29,18 @@ def backfill_embeddings(request: Request, batch: int = 10,
     """SP4：为 embedding 为空的条目批量补算向量（幂等，可重复执行直至 remaining=0）。
 
     向量 = 可重建缓存：模型换版/索引损坏时清空 embedding 列后重跑即可。"""
+    tenant = db.current_tenant()
     if not embedding.is_available():
         request.state.trace_detail = {"operation": "backfill", "filled": 0, "error": "key 未配置"}
         return {"message": "DASHSCOPE_API_KEY 未配置，回填跳过", "filled": 0, "remaining": None}
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT path, COALESCE(title,'') || ' ' || COALESCE(description,'') "
-            "FROM knowledge_entries WHERE embedding IS NULL LIMIT %s",
-            (max(1, min(batch, 50)),)).fetchall()
+            "FROM knowledge_entries WHERE embedding IS NULL AND tenant_id=%s LIMIT %s",
+            (tenant, max(1, min(batch, 50)))).fetchall()
         remaining = conn.execute(
-            "SELECT COUNT(*) FROM knowledge_entries WHERE embedding IS NULL").fetchone()[0]
+            "SELECT COUNT(*) FROM knowledge_entries WHERE embedding IS NULL AND tenant_id=%s",
+            (tenant,)).fetchone()[0]
     if not rows:
         return {"message": "全部条目已向量化", "filled": 0, "remaining": 0}
     paths = [r[0] for r in rows]
@@ -51,10 +53,11 @@ def backfill_embeddings(request: Request, batch: int = 10,
     with db.get_conn() as conn:
         for path, vec in zip(paths, vecs):
             conn.execute(
-                "UPDATE knowledge_entries SET embedding = %s::vector WHERE path = %s",
-                (json.dumps(vec), path))
+                "UPDATE knowledge_entries SET embedding = %s::vector WHERE path = %s AND tenant_id = %s",
+                (json.dumps(vec), path, tenant))
         remaining = conn.execute(
-            "SELECT COUNT(*) FROM knowledge_entries WHERE embedding IS NULL").fetchone()[0]
+            "SELECT COUNT(*) FROM knowledge_entries WHERE embedding IS NULL AND tenant_id=%s",
+            (tenant,)).fetchone()[0]
     audit_log(user.username, "backfill_embeddings", target_path=",".join(paths)[:300],
               detail={"filled": len(paths)})
     request.state.trace_detail = {"operation": "backfill", "filled": len(paths)}
@@ -66,7 +69,7 @@ _SPAN_LABELS = {
     "compile_session": "编译会话", "search": "检索",
     "review_approve": "审核-通过", "review_reject": "审核-驳回",
     "review_resubmit": "审核-重提", "review_retry_ai": "审核-重试AI",
-    "rebuild_index": "重建索引", "login": "登录",
+    "rebuild_index": "重建索引", "login": "登录", "ask": "对话问答",
 }
 
 
@@ -121,10 +124,10 @@ def reports(kind: str = Query("growth", pattern="^(growth|health)$"),
     """周报读取（自增长 / 健康巡检）。周报由 Claude Code 写在共享卷，Vue 经 API 取。
     与 Streamlit 原实现一致：取最新一份。"""
     import glob
-    import os
     from pathlib import Path
 
-    kb = Path(os.environ.get("KB_ROOT", os.path.join(os.path.dirname(db.__file__), "..", "vault")))
+    import paths                                  # L3.5：周报也按租户分区，各租户只看自己的
+    kb = Path(paths.kb_root())
     prefix = "自增长周报_" if kind == "growth" else "健康周报_"
     found = sorted(glob.glob(str(kb / "NEXUS" / "研究" / f"{prefix}*.md")), reverse=True)
     if not found:

@@ -26,6 +26,12 @@ DB_CONFIG = {
 }
 KB_ROOT = os.environ.get("KB_ROOT", os.path.join(os.path.dirname(__file__), "..", "vault"))
 
+
+def _kb_root() -> str:
+    """当前租户的知识库根（L3.5 文件分区）。延迟 import paths：paths 反向 import db 取租户。"""
+    import paths
+    return str(paths.kb_root())
+
 # schema.sql 所在目录（仓库根 = 本文件 ../）
 _SCHEMA = os.path.join(os.path.dirname(__file__), "..", "schema.sql")
 
@@ -93,7 +99,7 @@ def ensure_schema() -> None:
     此时本函数不再尝试建表，而是**验证 schema 已就绪**（缺表就明确报错，不静默带病启动）。
     """
     for rel in _REQUIRED_DIRS:
-        os.makedirs(os.path.join(KB_ROOT, rel), exist_ok=True)
+        os.makedirs(os.path.join(str(_kb_root()), rel), exist_ok=True)
     with open(_SCHEMA, encoding="utf-8") as f:
         ddl = f.read()
     try:
@@ -103,7 +109,28 @@ def ensure_schema() -> None:
     except psycopg.errors.InsufficientPrivilege:
         _assert_schema_ready()
         logger.warning("当前连接无 DDL 权限（受限角色）：跳过建表，已确认 schema 就绪")
+    try:
+        if not rls_enforced():
+            logger.warning(
+                "RLS 未生效：当前数据库角色是超级用户或 BYPASSRLS，租户隔离退化为应用层过滤"
+                "（生产/验收请用受限角色 llmwiki_app，见 docs/WIKI-70 §5 L3.5）")
+    except Exception:                     # 自检失败不影响启动（例如只读连接）
+        logger.debug("RLS 自检跳过", exc_info=True)
     _ensure_admin()
+
+
+def rls_enforced() -> bool:
+    """当前连接的角色是否**真的**受 RLS 约束（诚实自检，绝不假装隔离生效）。
+
+    超级用户与 `BYPASSRLS` 角色会绕过所有 RLS 策略——Docker 默认的 `POSTGRES_USER`
+    就是超级用户，本地开发即处于这种状态：此时租户隔离**退化为应用层显式过滤**
+    （`tenant_id = current_tenant()`，见 WIKI-70 §5 L3.5）。生产/验收须用受限角色
+    `llmwiki_app`（`docker/initdb/20-app-role`），并把本函数作为验收项。
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user").fetchone()
+    return not (row and row[0])
 
 
 def _assert_schema_ready() -> None:
@@ -551,39 +578,48 @@ def _colnames(conn, table: str) -> list[str]:
 def upsert_entry(path: str, type_: str, title: str,
                  department: str | None, status: str,
                  version: str, fingerprint: str | None,
-                 updated_at: str) -> None:
-    """UPSERT INTO knowledge_entries（path 冲突则更新全字段）。"""
+                 updated_at: str, tenant_id: str | None = None) -> None:
+    """UPSERT INTO knowledge_entries（同租户内 path 冲突则更新全字段）。
+
+    冲突目标必须是 **(tenant_id, path)**（L3.5）：文件按租户分区后不同租户会有同名条目，
+    只按 path 去重会跨租户覆盖——tenant_id 显式写入，不依赖列默认值（默认值只在
+    连接设过 `app.tenant_id` 时才正确）。
+    """
+    tenant = tenant_id or current_tenant()
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO knowledge_entries
-               (path, type, title, department, status, version, fingerprint, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT (path) DO UPDATE SET
+               (path, type, title, department, status, version, fingerprint, updated_at, tenant_id)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (tenant_id, path) DO UPDATE SET
                  type=EXCLUDED.type, title=EXCLUDED.title, department=EXCLUDED.department,
                  status=EXCLUDED.status, version=EXCLUDED.version,
                  fingerprint=EXCLUDED.fingerprint, updated_at=EXCLUDED.updated_at""",
-            (path, type_, title, department, status, version, fingerprint, updated_at))
+            (path, type_, title, department, status, version, fingerprint, updated_at, tenant))
 
 
-def update_status(path: str, status: str) -> None:
-    """更新 knowledge_entries.status（不触碰文件，文件由调用方改）。"""
+def update_status(path: str, status: str, tenant_id: str | None = None) -> None:
+    """更新 knowledge_entries.status（不触碰文件，文件由调用方改）；只动本租户的行。"""
+    tenant = tenant_id or current_tenant()
     with get_conn() as conn:
-        conn.execute("UPDATE knowledge_entries SET status=%s WHERE path=%s", (status, path))
+        conn.execute("UPDATE knowledge_entries SET status=%s WHERE path=%s AND tenant_id=%s",
+                     (status, path, tenant))
 
 
-def move_entry(old_path: str, new_path: str, status: str) -> None:
-    """DELETE 旧 path 行 + INSERT 新 path 行（保留原字段）。"""
+def move_entry(old_path: str, new_path: str, status: str, tenant_id: str | None = None) -> None:
+    """DELETE 旧 path 行 + INSERT 新 path 行（保留原字段）。租户内操作，不跨租户动数据。"""
+    tenant = tenant_id or current_tenant()
     with get_conn() as conn:
         row = conn.execute(
             "SELECT type, title, department, version, fingerprint, updated_at "
-            "FROM knowledge_entries WHERE path=%s", (old_path,)).fetchone()
+            "FROM knowledge_entries WHERE path=%s AND tenant_id=%s", (old_path, tenant)).fetchone()
         if row is None:
             raise KeyError(f"knowledge_entries 无此路径: {old_path}")
-        conn.execute("DELETE FROM knowledge_entries WHERE path=%s", (old_path,))
+        conn.execute("DELETE FROM knowledge_entries WHERE path=%s AND tenant_id=%s", (old_path, tenant))
         conn.execute(
-            "INSERT INTO knowledge_entries (path, type, title, department, status, version, fingerprint, updated_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-            (new_path, row[0], row[1], row[2], status, row[3], row[4], row[5]))
+            "INSERT INTO knowledge_entries (path, type, title, department, status, version, fingerprint, updated_at, tenant_id) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (new_path, row[0], row[1], row[2], status, row[3], row[4], row[5], tenant))
 
 
 # ---- 编译任务（L2：可并发认领的工作队列）----
@@ -670,17 +706,22 @@ def requeue_compile_task(task_id: int) -> None:
             "       lease_until=NULL, leased_by=NULL, error_msg=NULL WHERE id=%s", (task_id,))
 
 
-def queue_stats(tenant_id: str | None = None) -> dict:
-    """队列观测：各状态任务数与最老待处理任务年龄（秒）。"""
+def queue_stats(tenant_id: str | None = None, *, all_tenants: bool = False) -> dict:
+    """队列观测：各状态任务数与最老待处理任务年龄（秒）。
+
+    默认只看**当前租户**（HTTP 看板/管理接口）；后台 worker 要跨租户巡检时显式传
+    `all_tenants=True`——不能靠"不传就是全部"，那会让租户看板在超级用户连接下串数据。
+    """
+    tenant = None if all_tenants else (tenant_id or current_tenant())
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT status, count(*) FROM compile_tasks "
             "WHERE (%s::text IS NULL OR tenant_id = %s::text) GROUP BY status",
-            (tenant_id, tenant_id)).fetchall()
+            (tenant, tenant)).fetchall()
         oldest = conn.execute(
             "SELECT COALESCE(EXTRACT(EPOCH FROM (now() - min(started_at))), 0) FROM compile_tasks "
             "WHERE status IN ('pending','processing') AND (%s::text IS NULL OR tenant_id = %s::text)",
-            (tenant_id, tenant_id)).fetchone()[0]
+            (tenant, tenant)).fetchone()[0]
     stats = {status: count for status, count in rows}
     stats["oldest_pending_seconds"] = int(float(oldest or 0))
     return stats
@@ -698,31 +739,41 @@ def update_compile_task(task_id: int, status: str,
 
 
 def find_done_compile_task(raw_path: str, fingerprint: str,
-                           exclude_id: int | None = None) -> dict | None:
-    """同路径 + 同指纹的已完成（done/cached）任务——**队列模式下的去重判据**。
+                           exclude_id: int | None = None,
+                           tenant_id: str | None = None) -> dict | None:
+    """同租户 + 同路径 + 同指纹的已完成（done/cached）任务——**队列模式下的去重判据**。
 
     为什么需要它：队列里同一个文件可能被重复入队（上传 / 批量扫描 / 人工重试），
     每个任务行的 `latest_compile_task` 只看到"自己是最新的 pending"，会漏掉历史 done 记录，
     于是重复编译并产出 `xxx-2.md` 这类重复条目（实测问题）。
     `exclude_id` 用于排除"当前正在处理的这一行"。
+
+    **必须按租户过滤**（L3.5 实测 bug）：文件按租户分区后，两个租户会有**完全同名同内容**
+    的 `RAW/会议/周会.md`——只按 (path, fingerprint) 去重会让 B 租户的文件命中 A 租户的
+    done 记录、直接判 `cached` 而**永不编译**。RLS 只在受限角色下生效，本地开发/测试用
+    超级用户连接时会绕过，所以这里必须显式带上 tenant_id。
     """
+    tenant = tenant_id or current_tenant()
     with get_conn() as conn:
         row = conn.execute(
             "SELECT id, raw_path, nexus_path, status, fingerprint FROM compile_tasks "
-            "WHERE raw_path=%s AND fingerprint=%s AND status IN ('done','cached') "
+            "WHERE raw_path=%s AND fingerprint=%s AND tenant_id=%s AND status IN ('done','cached') "
             "  AND (%s::int IS NULL OR id <> %s::int) "
-            "ORDER BY id DESC LIMIT 1", (raw_path, fingerprint, exclude_id, exclude_id)).fetchone()
+            "ORDER BY id DESC LIMIT 1",
+            (raw_path, fingerprint, tenant, exclude_id, exclude_id)).fetchone()
     if row is None:
         return None
     return dict(zip(("id", "raw_path", "nexus_path", "status", "fingerprint"), row))
 
 
-def latest_compile_task(raw_path: str) -> dict | None:
-    """某 RAW 路径的最新编译任务（断点续跑/指纹幂等的判据）。"""
+def latest_compile_task(raw_path: str, tenant_id: str | None = None) -> dict | None:
+    """某 RAW 路径的最新编译任务（断点续跑/指纹幂等的判据）。**按租户过滤**（同 find_done_compile_task）。"""
+    tenant = tenant_id or current_tenant()
     with get_conn() as conn:
         row = conn.execute(
             "SELECT id, raw_path, nexus_path, status, fingerprint, error_msg, started_at, completed_at "
-            "FROM compile_tasks WHERE raw_path=%s ORDER BY id DESC LIMIT 1", (raw_path,)).fetchone()
+            "FROM compile_tasks WHERE raw_path=%s AND tenant_id=%s ORDER BY id DESC LIMIT 1",
+            (raw_path, tenant)).fetchone()
     if row is None:
         return None
     keys = ("id", "raw_path", "nexus_path", "status", "fingerprint", "error_msg",
@@ -827,12 +878,14 @@ def llm_usage_summary(tenant_id: str | None = None, days: int = 7) -> list[dict]
              "latency_ms": int(r[4]), "errors": r[5]} for r in rows]
 
 
-def list_recent_compile_tasks(limit: int = 50) -> list[dict]:
-    """最近的编译任务（upload 页状态表）。"""
+def list_recent_compile_tasks(limit: int = 50, tenant_id: str | None = None) -> list[dict]:
+    """最近的编译任务（upload 页状态表）。**只看当前租户**（同 queue_stats 的理由）。"""
+    tenant = tenant_id or current_tenant()
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT id, raw_path, status, fingerprint, error_msg, completed_at "
-            "FROM compile_tasks ORDER BY id DESC LIMIT %s", (limit,)).fetchall()
+            "FROM compile_tasks WHERE tenant_id=%s ORDER BY id DESC LIMIT %s",
+            (tenant, limit)).fetchall()
         return [{"id": r[0], "raw_path": r[1], "status": r[2], "fingerprint": r[3],
                  "error_msg": r[4], "completed_at": r[5]} for r in rows]
 
@@ -942,23 +995,28 @@ def search_stats() -> dict:
 
 
 # ---- 重建索引 ----
-def rebuild_index() -> int:
-    """扫描 KB_ROOT 下 NEXUS/**/*.md 与 pending_review/*.md，解析 YAML 重建表。返回条目数。
+def rebuild_index(tenant_id: str | None = None) -> int:
+    """扫描**当前租户**知识库下 NEXUS/**/*.md 与 pending_review/*.md，解析 YAML 重建表。返回条目数。
 
     单文件损坏（无完整 frontmatter / YAML 非法 / frontmatter 非映射）仅跳过该文件，
-    不影响其余条目重建。"""
+    不影响其余条目重建。**只重建本租户**（L3.5）：扫本租户的根（`paths.kb_root()`），
+    也只删本租户的行——否则一个租户重建会把别的租户索引清空。
+    """
     import yaml
+    import paths
+    tenant = tenant_id or current_tenant()
+    root = str(paths.kb_root(tenant))
     count = 0
     with get_conn() as conn:
-        conn.execute("DELETE FROM knowledge_entries")
+        conn.execute("DELETE FROM knowledge_entries WHERE tenant_id=%s", (tenant,))
         for base in ("NEXUS", "pending_review"):
-            base_dir = os.path.join(KB_ROOT, base)
+            base_dir = os.path.join(root, base)
             for dirpath, _, files in os.walk(base_dir):
                 for fn in files:
                     if not fn.endswith(".md"):
                         continue
                     full = os.path.join(dirpath, fn)
-                    rel = os.path.relpath(full, KB_ROOT).replace("\\", "/")
+                    rel = os.path.relpath(full, root).replace("\\", "/")
                     with open(full, encoding="utf-8") as f:
                         text = f.read()
                     if not text.startswith("---"):
@@ -974,9 +1032,9 @@ def rebuild_index() -> int:
                         continue
                     conn.execute(
                         "INSERT INTO knowledge_entries "
-                        "(path, type, title, department, status, version, fingerprint, updated_at, description) "
-                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-                        "ON CONFLICT (path) DO UPDATE SET "
+                        "(path, type, title, department, status, version, fingerprint, updated_at, description, tenant_id) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT (tenant_id, path) DO UPDATE SET "
                         "type=EXCLUDED.type, title=EXCLUDED.title, department=EXCLUDED.department, "
                         "status=EXCLUDED.status, version=EXCLUDED.version, "
                         "fingerprint=EXCLUDED.fingerprint, updated_at=EXCLUDED.updated_at, "
@@ -985,7 +1043,7 @@ def rebuild_index() -> int:
                          meta.get("department"), meta.get("status", "active"),
                          meta.get("version", "V1.0"), meta.get("fingerprint"),
                          meta.get("updated", meta.get("created")),
-                         meta.get("description")))
+                         meta.get("description"), tenant))
                     count += 1
     return count
 

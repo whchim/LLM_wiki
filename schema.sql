@@ -403,3 +403,43 @@ BEGIN
       'WITH CHECK (tenant_id = current_setting(''app.tenant_id'', true))', t);
   END LOOP;
 END $$;
+
+-- ============================================================
+-- L3.5 文件分区 + 条目身份按租户（幂等）
+-- ------------------------------------------------------------
+-- 背景：文件按租户分区后（非默认租户落在 `<KB_ROOT>/tenants/<id>/`），两个租户会出现
+-- **完全同名**的条目路径（如都叫 `NEXUS/概念/产品.md`）。`knowledge_entries` 原以 `path`
+-- 单列做主键：B 租户写同名条目会 `ON CONFLICT (path) DO UPDATE` **覆盖 A 租户的行**，
+-- 且 B 的条目根本存不下来。身份必须改成 **(tenant_id, path)**。
+--
+-- 连带影响：`contributors.entry_path` 原来外键指向 `knowledge_entries(path)`——单列主键
+-- 被替换后该外键失去唯一索引支撑，必须先摘掉，改成**复合外键 (tenant_id, entry_path)**：
+-- 贡献记录同样只能指向本租户的条目（跨租户引用于是被数据库挡住）。
+-- 新外键用 `NOT VALID` 添加：历史数据（迁移前的行）不阻塞启动，但**新写入立即受约束**。
+-- 迁移幂等：只在当前主键仍是「单列 path」时替换，重复执行无副作用。
+-- ============================================================
+DO $$
+DECLARE
+  pk_cols int;
+BEGIN
+  SELECT count(*) INTO pk_cols
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+   WHERE c.conrelid = 'knowledge_entries'::regclass AND c.contype = 'p';
+  IF pk_cols = 1 THEN
+    ALTER TABLE contributors DROP CONSTRAINT IF EXISTS contributors_entry_path_fkey;
+    ALTER TABLE knowledge_entries DROP CONSTRAINT knowledge_entries_pkey;
+    ALTER TABLE knowledge_entries
+      ADD CONSTRAINT knowledge_entries_pkey PRIMARY KEY (tenant_id, path);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'contributors_entry_tenant_fkey') THEN
+    ALTER TABLE contributors
+      ADD CONSTRAINT contributors_entry_tenant_fkey
+      FOREIGN KEY (tenant_id, entry_path) REFERENCES knowledge_entries(tenant_id, path)
+      ON DELETE CASCADE NOT VALID;
+  END IF;
+END $$;

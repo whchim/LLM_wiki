@@ -1,14 +1,23 @@
-"""纯操作逻辑：触发文件、上传校验、审核动作。UI 只调用这些函数，不做业务。"""
+"""纯操作逻辑：触发文件、上传校验、审核动作。UI 只调用这些函数，不做业务。
+
+知识库根走 `paths.kb_root()`（L3.5 文件分区：默认租户 = KB_ROOT，其他租户 = KB_ROOT/tenants/<id>）。
+模块级 `KB_ROOT` 仅作兼容保留（等于默认租户根）。"""
 import os
 import re
 import hashlib
 from datetime import datetime
 from pathlib import Path
 
+import paths as paths_module
 from db import (get_conn, update_status, move_entry, insert_search_log,
                 set_human_decision, resubmit_review)
 
 KB_ROOT = os.environ.get("KB_ROOT", os.path.join(os.path.dirname(__file__), "..", "vault"))
+
+
+def kb_root() -> Path:
+    """当前租户的知识库根（L3.5 文件分区；默认租户与 KB_ROOT 相同）。"""
+    return paths_module.kb_root()
 ALLOWED_EXTS = {".md", ".txt", ".pdf", ".docx"}
 MAX_SIZE = 10 * 1024 * 1024  # 10MB
 
@@ -33,7 +42,7 @@ def validate_upload(filename: str, size: int) -> str | None:
 
 def write_trigger(kind: str, paths: list[str], source: str) -> Path:
     """原子写触发文件（.tmp + mv），返回最终路径。kind: compile|review"""
-    trig_dir = Path(KB_ROOT) / "_triggers"
+    trig_dir = kb_root() / "_triggers"
     trig_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S%f")  # 微秒：防同秒多次触发同名碰撞
     final = trig_dir / f"{kind}_{ts}.md"
@@ -61,25 +70,25 @@ def approve_entry(review_id: int, old_path: str, new_path: str) -> str:
     """通过：移动文件 + YAML status=active + db 双写 + 追加 index.md。
 
     返回实际目标路径（同名冲突时含 -2 后缀）；源文件缺失时抛 FileNotFoundError。"""
-    src = Path(KB_ROOT) / old_path
+    src = kb_root() / old_path
     if not src.exists():
         raise FileNotFoundError(f"文件不存在: {old_path}")
-    dst = Path(KB_ROOT) / new_path
+    dst = kb_root() / new_path
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():  # 同名冲突：追加 -2 后缀
         stem = dst.stem
         dst = dst.with_name(f"{stem}-2.md")
     src.replace(dst)
     _yaml_edit(dst, "status", "active")
-    move_entry(old_path, dst.relative_to(Path(KB_ROOT)).as_posix(), "active")
+    move_entry(old_path, dst.relative_to(kb_root()).as_posix(), "active")
     set_human_decision(review_id, "approved")
-    _append_index(f"[[概念-{dst.stem}]] → {dst.relative_to(Path(KB_ROOT)).as_posix()}")
-    return dst.relative_to(Path(KB_ROOT)).as_posix()
+    _append_index(f"[[概念-{dst.stem}]] → {dst.relative_to(kb_root()).as_posix()}")
+    return dst.relative_to(kb_root()).as_posix()
 
 
 def reject_entry(review_id: int, path: str, reason: str) -> None:
     """驳回：YAML status=draft + db 双写。"""
-    p = Path(KB_ROOT) / path
+    p = kb_root() / path
     _yaml_edit(p, "status", "draft")
     update_status(path, "draft")
     set_human_decision(review_id, "rejected", reason)
@@ -87,7 +96,7 @@ def reject_entry(review_id: int, path: str, reason: str) -> None:
 
 def resubmit(review_id: int, path: str) -> None:
     """重新提交：YAML status=pending + db 双写。"""
-    p = Path(KB_ROOT) / path
+    p = kb_root() / path
     _yaml_edit(p, "status", "pending")
     update_status(path, "pending")
     resubmit_review(review_id)
@@ -121,7 +130,7 @@ def append_index(section: str, line: str) -> None:
     """把一行条目追加到 index.md 的指定节（幂等），并刷新头部统计行。
 
     section：`资源` / `概念`（与 index.md 的二级标题一致）。"""
-    idx = Path(KB_ROOT) / "NEXUS" / "index.md"
+    idx = kb_root() / "NEXUS" / "index.md"
     if not idx.exists():
         return
     text = idx.read_text(encoding="utf-8")
