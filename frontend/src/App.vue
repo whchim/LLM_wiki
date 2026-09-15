@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   DataAnalysis, DataBoard, Document, FolderOpened, Moon, Refresh, Search,
@@ -89,6 +89,17 @@ async function rebuildIndex() {
 }
 
 onMounted(() => { if (auth.value) view.value = 'overview' })
+
+/** 会话过期（api.js 在 401 时广播）：清本地会话并回到登录页，给出明确原因。
+ *  不加这一段的表现是"每个页面各自报错、停在空白页"，用户只会看到一堆 401。 */
+function onUnauthorized() {
+  if (!auth.value) return
+  auth.value = null
+  view.value = 'overview'
+  ElMessage.warning('登录已过期，请重新登录。')
+}
+onMounted(() => window.addEventListener('llmwiki:unauthorized', onUnauthorized))
+onBeforeUnmount(() => window.removeEventListener('llmwiki:unauthorized', onUnauthorized))
 
 defineExpose({ notifyError })
 </script>

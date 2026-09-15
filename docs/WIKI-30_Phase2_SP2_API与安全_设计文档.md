@@ -256,5 +256,18 @@ class ApiClient:
 
 ## Changelog
 
+- **v0.1.2（2026-09-15）**：修两个**用户实际撞到**的问题（都由真机使用暴露，不是想象出来的）。
+  ① **`GET /uploads/tasks` 500**：L2 把 `compile_tasks.started_at/completed_at` 从 TEXT 改成
+  `TIMESTAMPTZ`，但响应模型 `TaskOut.completed_at` 仍声明 `str`——psycopg 返回 `datetime`，
+  只要列表中**出现一个已完成任务**，FastAPI 响应校验就 `ResponseValidationError`（实测：
+  上传页从第 6 条起整页打不开，前 5 条恰好都是 pending 才一直没暴露）。
+  改为 `datetime | None`（ISO 序列化交给 FastAPI），并补回归用例
+  `test_tasks_list_serializes_completed_at`（**已验证：改回 `str` 该用例必失败**）。
+  顺带核查了所有 `TIMESTAMPTZ` 列与响应模型的对应关系：只有 `TaskOut` 是"typed model 直吃库时间戳"，
+  其余端点返回 `dict`，由 `jsonable_encoder` 统一 ISO 化（`pending_reviews.created_at`、
+  `search_logs.timestamp`、`trace_events.created_at` 本身就是 TEXT）。
+  ② **前端对 401 无处置**：token 过期后每个页面各自报错、停在空白页，控制台刷满 401。
+  现在 `api.js` 在 401（且非 `/auth/login`）时清掉本地会话并广播 `llmwiki:unauthorized`
+  （**只广播一次**，避免并发请求刷屏），`App.vue` 收到后回到登录页并提示"登录已过期，请重新登录"。
 - **v0.1.1（2026-09-01）**：修复 `auth.py` 的 import 副作用违例——`_fail_fast_check()` 原在模块顶层执行（import 即抛 RuntimeError），任何未配置 JWT_SECRET 的工具/测试脚本无法导入 api 包（踩了 2026-08-24 故事一"被 import 的模块必须零副作用"的纪律）。改为：JWT_SECRET 运行时读取（函数内动态读 env，沿 KB_ROOT 同款惯例）+ `ensure_ready()` 在 encode/decode 前检查；服务侧 fail-fast 移入 `main.lifespan` 显式调用。行为不变（服务启动缺 key 仍即败），工具脚本不再被 import 阻塞。新增测试 `test_ensure_ready_raises_without_secret`。
 - **v0.1（2026-08-24）**：初稿。依据路线图 SP2 + 已拍板决策（D-前端策略=保留 Streamlit+JWT；D-多用户写入=登录+角色权限生效）。决策：PyJWT+pwdlib[argon2]（替代 passlib）、audit 为业务函数非 ASGI 中间件、users 表 SP2 补 DDL、api 独立容器共享 streamlit_app 模块、ensure_schema 扩展初始管理员。错误处理防用户枚举（401 统一）。

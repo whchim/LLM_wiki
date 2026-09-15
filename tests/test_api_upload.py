@@ -79,6 +79,40 @@ def test_tasks_and_retry_flow(client, headers):
     assert rr.json()["task_id"] == failed_id
 
 
+def test_tasks_list_serializes_completed_at(client, headers):
+    """**已完成任务必须能列出来**（回归锁）。
+
+    L2 把 `compile_tasks.started_at/completed_at` 从 TEXT 改成 TIMESTAMPTZ 后，
+    `TaskOut.completed_at` 仍声明为 `str`：只要列表里出现一个**有完成时间**的任务，
+    FastAPI 响应校验就 500（实测：上传页第 6 条起就整页打不开——前 5 条恰好是 pending）。
+    这里显式插入一条 done 任务，锁住"能序列化 + 是 ISO 时间字符串"。
+    """
+    import db
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO compile_tasks (raw_path, fingerprint, status, started_at, completed_at) "
+            "VALUES (%s,%s,'done', now() - interval '1 minute', now())",
+            ("RAW/个人_notes/done.md", "done123"))
+
+    r = client.get("/uploads/tasks", headers=headers)
+    assert r.status_code == 200, r.text
+    done = next(t for t in r.json() if t["status"] == "done")
+    assert isinstance(done["completed_at"], str) and "T" in done["completed_at"]
+    assert done["raw_path"] == "RAW/个人_notes/done.md"
+
+
+def test_tasks_are_tenant_scoped(client, headers):
+    """任务列表只看当前租户（L3.5：队列与看板都不能串租户）。"""
+    import db
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO compile_tasks (raw_path, fingerprint, status, tenant_id) "
+            "VALUES ('RAW/别的租户.md','t-other','pending','tenant-x')")
+    r = client.get("/uploads/tasks", headers=headers)
+    assert r.status_code == 200
+    assert all(t["raw_path"] != "RAW/别的租户.md" for t in r.json())
+
+
 def test_upload_trigger_failure_compensates(client, headers, tmp_path, monkeypatch):
     """**CLI 引擎**下触发文件写入失败：已插任务补偿为 failed，不残留无触发的 pending。
 

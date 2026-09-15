@@ -1,4 +1,5 @@
 """SP2 Pydantic 请求/响应模型（设计文档 5.1 端点表）。"""
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -30,11 +31,18 @@ class Page(BaseModel):
 
 # ---- 上传 ----
 class TaskOut(BaseModel):
+    """编译任务（上传页状态表）。
+
+    ⚠️ `completed_at` 必须是 `datetime`：L2 把 `compile_tasks` 的时间戳从 TEXT 改成了
+    `TIMESTAMPTZ`，psycopg 返回的是 `datetime` 对象，而这里原声明为 `str` ——
+    只要列表里出现**一个已完成任务**，响应校验就 500（实测：任务表第 6 行起有 completed_at
+    就直接打不开上传页；前几行恰好是 pending 才没暴露）。用 `datetime` 让 FastAPI 自己序列化成 ISO。
+    """
     id: int
     raw_path: str
     status: str
     error_msg: str | None = None
-    completed_at: str | None = None
+    completed_at: datetime | None = None
 
 
 class UploadResult(BaseModel):

@@ -81,7 +81,7 @@ Vue 工作台（nginx 托管 + /api 反代） ←HTTP→ api/（FastAPI）→ Po
 
 - **知识层引擎双路径**：**应用内引擎**（`tools/compile_worker.py` → `core/compile_service.py` → `ModelPort`，容器内可跑、可测、可计量，云端生产走这条）与 **Claude Code CLI**（watcher → `claude -p /process-triggers`，自主性更强但依赖宿主机 CLI/登录态，本地开发与开放探索任务走这条）。两者共用同一份契约（`prompts/compile_prompt.md` + `core/output_schema.py`）。**应用层不依赖任何一个**——销售 Agent 的模型调用走 `core/sales_*` 与 `api/routers/*` 内的调用层（见 SA-13）；引擎分层理由与多租户路线图见 `docs/WIKI-70`
 - **界面统一为 Vue 3**（`frontend/`，Element Plus）：原 Streamlit 管理台已退役删除；`core/` 只保留被 API 与工具链复用的业务逻辑（数据层/规则/领域模型），不含任何界面代码
-- **后端演进**：Demo 期论证"无后端"（单用户、schema 稳定）；SP2 起为认证/审计/向量检索/多用户上 FastAPI REST API + JWT（PyJWT HS256 + argon2），前端经 REST 消费，不直连库
+- **后端演进**：Demo 期论证"无后端"（单用户、schema 稳定）；SP2 起为认证/审计/向量检索/多用户上 FastAPI REST API + JWT（PyJWT HS256 + argon2），前端经 REST 消费，不直连库。**typed 响应模型要盯住库列类型**：`compile_tasks` 的时间戳在 L2 改成 `TIMESTAMPTZ` 后，`TaskOut.completed_at` 仍写 `str` → 列表里出现一个已完成任务就 500（上传页打不开，回归用例 `test_tasks_list_serializes_completed_at` 已锁）；其余端点返回 `dict`，由 `jsonable_encoder` 统一把 `datetime` 序列化成 ISO。**前端会话过期**：`api.js` 遇 401（非 `/auth/login`）清本地会话并广播 `llmwiki:unauthorized`（只广播一次），`App.vue` 回到登录页并提示重新登录——否则 token 过期后各页面各自报错、停在空白页
 - **PostgreSQL 是缓存不是权威**：YAML Frontmatter 是规范数据源，任何状态变更必须双写（YAML + PG），不一致时文件为准；向量 embedding 同为可重建缓存（backfill 全量重算）。**应用层例外**：销售证据/状态事件的事实权威在 PG（事务 + 状态机约束 + 幂等键），不在 Markdown
 
 ## 关键机制

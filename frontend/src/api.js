@@ -9,6 +9,17 @@ export class ApiError extends Error {
   }
 }
 
+/** 401 时清会话并通知 App（只通知一次，避免并发请求刷屏）——见 App.vue 的监听。 */
+let sessionExpiredNotified = false
+function handleUnauthorized(path) {
+  if (path.startsWith('/auth/login')) return          // 登录接口的 401 = 账号密码错，不是会话过期
+  localStorage.removeItem('llmwiki_token')
+  localStorage.removeItem('llmwiki_auth')
+  if (sessionExpiredNotified) return
+  sessionExpiredNotified = true
+  window.dispatchEvent(new CustomEvent('llmwiki:unauthorized'))
+}
+
 export async function request(path, options = {}) {
   const token = localStorage.getItem('llmwiki_token')
   const isForm = options.body instanceof FormData
@@ -22,10 +33,13 @@ export async function request(path, options = {}) {
   }
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
+    if (response.status === 401) handleUnauthorized(path)
     const detail = payload.detail
-    const message = typeof detail === 'object'
-      ? detail.errors?.join('；') || detail.message || JSON.stringify(detail)
-      : detail || '请求失败'
+    const message = response.status === 401 && !path.startsWith('/auth/login')
+      ? '登录已过期，请重新登录。'
+      : (typeof detail === 'object'
+        ? detail.errors?.join('；') || detail.message || JSON.stringify(detail)
+        : detail || '请求失败')
     throw new ApiError(response.status, message)
   }
   return payload
