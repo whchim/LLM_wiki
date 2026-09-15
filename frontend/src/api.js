@@ -49,6 +49,9 @@ export const api = {
   ask: (question, topK = 6) => request('/ask', {
     method: 'POST', body: JSON.stringify({ question, top_k: topK }),
   }),
+  // 知识图谱：节点（条目）+ 边（related_to / [[wikilink]] / markdown 链接）+ 待建页面
+  graph: (includePending = false) => request(`/graph${qs({ include_pending: includePending })}`),
+  graphNeighbors: (path) => request(`/graph/neighbors${qs({ path })}`),
   searchStats: () => request('/search/stats'),
   searchMissed: (limit = 20) => request(`/search/missed${qs({ limit })}`),
 
