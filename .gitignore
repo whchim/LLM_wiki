@@ -38,6 +38,10 @@ docs/VAL-03_检索评测_黄金集.md
 frontend/node_modules/
 frontend/dist/
 
+# 图谱视觉自检的中间产物（graph_snapshot.mjs 生成，可随时重跑）
+frontend/tools/_graph_*.html
+frontend/tools/_shot_*.png
+
 # npm 本地缓存目录（不进仓库）
 .npm-cache/
 
